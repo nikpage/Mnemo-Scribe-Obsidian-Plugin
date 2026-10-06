@@ -1,0 +1,156 @@
+/* Search results: the title carries the note, the rest is there to tell two
+   similar notes apart without opening either. */
+.mnemo-result-title {
+  font-weight: 600;
+}
+
+.mnemo-result-meta {
+  color: var(--text-muted);
+}
+
+.mnemo-result-excerpt {
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  margin-top: 0.15em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The panel. Obsidian's own variables do the theming, so it looks like the
+   rest of the app in whatever theme the person chose. */
+.mnemo-view .mnemo-bar {
+  display: flex;
+  gap: var(--size-4-1);
+  align-items: center;
+  margin-bottom: var(--size-4-2);
+}
+
+.mnemo-view .mnemo-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.mnemo-view .mnemo-icon-button {
+  display: flex;
+  align-items: center;
+  padding: var(--size-4-1) var(--size-4-2);
+}
+
+.mnemo-view .mnemo-row {
+  margin-bottom: var(--size-4-2);
+}
+
+/* Mnemo's own colour: the panel must not read as a second copy of Obsidian's
+   search. The accent is on the one control that spends money. */
+.mnemo-view .mnemo-meaning {
+  width: 100%;
+  background: var(--color-purple);
+  color: var(--text-on-accent);
+  border: none;
+  font-weight: var(--font-semibold);
+}
+
+.mnemo-view .mnemo-meaning:hover {
+  filter: brightness(1.1);
+}
+
+.mnemo-view .mnemo-input:focus {
+  box-shadow: 0 0 0 2px var(--color-purple);
+}
+
+.mnemo-view .mnemo-note {
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  margin-bottom: var(--size-4-2);
+}
+
+.mnemo-view .mnemo-hit {
+  padding: var(--size-4-2);
+  border-radius: var(--radius-s);
+  cursor: pointer;
+}
+
+.mnemo-view .mnemo-hit:hover {
+  background: var(--background-modifier-hover);
+}
+
+/* In the panel a result has room to breathe, unlike the one-line modal. */
+.mnemo-view .mnemo-result-excerpt {
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+/* The panel's header: credits on the left, sync on the right. */
+.mnemo-view .mnemo-balance {
+  flex: 1;
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+}
+
+.mnemo-view .mnemo-tabs,
+.mnemo-view .mnemo-scope {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--size-4-1);
+  margin-bottom: var(--size-4-2);
+}
+
+.mnemo-view .mnemo-tabs button,
+.mnemo-view .mnemo-scope button {
+  font-size: var(--font-ui-smaller);
+  padding: var(--size-4-1) var(--size-4-2);
+}
+
+.mnemo-view .mnemo-tabs button.is-active,
+.mnemo-view .mnemo-scope button.is-active {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+}
+
+.mnemo-view .mnemo-wide {
+  width: 100%;
+  margin-bottom: var(--size-4-2);
+}
+
+.mnemo-view .mnemo-ask {
+  width: 100%;
+  margin-bottom: var(--size-4-2);
+}
+
+.mnemo-view .mnemo-section {
+  margin-bottom: var(--size-4-3);
+}
+
+.mnemo-view .mnemo-more {
+  border-left: 2px solid var(--color-purple);
+  padding-left: var(--size-4-2);
+}
+
+.mnemo-view .mnemo-answer a {
+  cursor: pointer;
+}
+
+.mnemo-view .mnemo-refused {
+  color: var(--text-error);
+}
+
+/* Recording: a clock big enough to read from arm's length. */
+.mnemo-record .mnemo-clock {
+  font-size: 2.5em;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  margin: var(--size-4-3) 0;
+}
+
+.mnemo-record .mnemo-stop {
+  width: 100%;
+}
+
+/* Folders in settings, indented by how deep they sit. */
+.mnemo-depth-1 { padding-left: 1.25em; }
+.mnemo-depth-2 { padding-left: 2.5em; }
+.mnemo-depth-3 { padding-left: 3.75em; }
+.mnemo-depth-4 { padding-left: 5em; }

@@ -1,0 +1,9 @@
+{
+  "id": "mnemo-scribe",
+  "name": "Mnemo",
+  "version": "0.2.0",
+  "minAppVersion": "1.5.7",
+  "description": "Voice notes recorded in Scribe appear in this vault, edits go back, and search finds them by meaning.",
+  "author": "Scribe",
+  "isDesktopOnly": false
+}

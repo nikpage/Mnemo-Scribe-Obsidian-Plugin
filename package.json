@@ -1,0 +1,16 @@
+{
+  "name": "mnemo-obsidian-plugin",
+  "version": "0.2.0",
+  "private": true,
+  "description": "Mnemo — the Obsidian plugin that keeps a vault in step with Scribe.",
+  "scripts": {
+    "build": "node esbuild.config.mjs production",
+    "dev": "node esbuild.config.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "esbuild": "^0.20.0",
+    "obsidian": "^1.5.7",
+    "typescript": "^5.4.0"
+  }
+}

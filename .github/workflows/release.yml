@@ -1,0 +1,37 @@
+# A pushed version tag (e.g. 0.2.0) builds the plugin and puts main.js,
+# manifest.json and styles.css on a GitHub release under that tag — the
+# files BRAT and the Community plugins store download. Runs once this folder
+# is the root of its own repository.
+name: Release
+
+on:
+  push:
+    tags:
+      - "*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - run: npm ci
+      - run: npx tsc --noEmit
+      - run: npm run build
+
+      # The tag must be the version in manifest.json, or Obsidian offers an
+      # update that never arrives.
+      - name: Tag matches manifest
+        run: test "$(node -p "require('./manifest.json').version")" = "${GITHUB_REF_NAME}"
+
+      - name: Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" main.js manifest.json styles.css --title "$GITHUB_REF_NAME" --notes "Mnemo $GITHUB_REF_NAME"
