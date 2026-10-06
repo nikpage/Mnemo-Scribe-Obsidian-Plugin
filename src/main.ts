@@ -58,8 +58,11 @@ type ScribeSettings = {
 
 type PersistedData = ScribeSettings & { state: SyncState; root?: string };
 
+/** Scribe's own address: a person pastes a token and nothing else. */
+const SCRIBE = "https://scribe02.netlify.app";
+
 const DEFAULTS: ScribeSettings = {
-  baseUrl: "",
+  baseUrl: SCRIBE,
   token: "",
   synced: [],
   inbox: "From Scribe",
@@ -259,7 +262,7 @@ export default class MnemoPlugin extends Plugin {
   async record() {
     const api = this.api();
     if (!api) {
-      new Notice("Mnemo: add your server address and token in settings first.");
+      new Notice("Mnemo: paste your device token in settings first.");
       return;
     }
     const billing = await this.billing(true).catch(() => null);
@@ -295,7 +298,7 @@ export default class MnemoPlugin extends Plugin {
     const api = this.api();
     const engine = this.engineNow();
     if (!api || !engine) {
-      new Notice("Mnemo: add your server address and token in settings first.");
+      new Notice("Mnemo: paste your device token in settings first.");
       return;
     }
     if (this.running) return;
@@ -358,7 +361,7 @@ export default class MnemoPlugin extends Plugin {
     const api = this.api();
     const engine = this.engineNow();
     if (!api || !engine) {
-      new Notice("Mnemo: add your server address and token in settings first.");
+      new Notice("Mnemo: paste your device token in settings first.");
       return;
     }
     new MnemoSearchModal(this.app, api, engine, () => this.save()).open();
@@ -422,7 +425,7 @@ export default class MnemoPlugin extends Plugin {
   async run(what: "pull" | "push" | "both", loud = false) {
     const engine = this.engineNow();
     if (!engine) {
-      if (loud) new Notice("Mnemo: add your server address and token in settings first.");
+      if (loud) new Notice("Mnemo: paste your device token in settings first.");
       return;
     }
     if (this.running) return;
@@ -476,6 +479,8 @@ export default class MnemoPlugin extends Plugin {
   async loadSettings() {
     const data = (await this.loadData()) as PersistedData | null;
     this.settings = { ...DEFAULTS, ...(data || {}) };
+    // A setting left blank by an older version means Scribe itself.
+    this.settings.baseUrl ||= SCRIBE;
     // A vault from before folders were chosen synced one folder; it still does.
     if (data?.root && !data.synced) this.settings.synced = [cleanFolder(data.root) || WHOLE_VAULT];
     delete (this.settings as Partial<PersistedData>).root;
@@ -529,20 +534,6 @@ class MnemoSettingTab extends PluginSettingTab {
     const { containerEl } = this;
     containerEl.empty();
     const settings = this.plugin.settings;
-
-    new Setting(containerEl)
-      .setName("Server address")
-      .setDesc("Where Scribe runs, e.g. https://scribe.example.com")
-      .addText((text) =>
-        text
-          .setPlaceholder("https://…")
-          .setValue(settings.baseUrl)
-          .onChange(async (value) => {
-            settings.baseUrl = value.trim();
-            this.plugin.resetEngine();
-            await this.plugin.save();
-          })
-      );
 
     new Setting(containerEl)
       .setName("Device token")

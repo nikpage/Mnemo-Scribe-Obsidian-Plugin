@@ -126,7 +126,7 @@ export class MnemoSearchView extends ItemView {
 
     const { api } = this.deps();
     if (!api) {
-      this.say("Add your server address and token in Mnemo's settings first.");
+      this.say("Paste your device token in Mnemo's settings first.");
       return;
     }
     void this.showBalance();

@@ -20,7 +20,6 @@ BRAT keeps it updated like any other plugin.
 
 Then open Mnemo's settings:
 
-- **Server address** — where Scribe runs.
 - **Device token** — Scribe → Settings → Connect a device. Shown once.
 - **Folders that sync** — tick any folders, or the whole vault. Ticking one
   offers its files for import into Scribe and says what that costs first.
