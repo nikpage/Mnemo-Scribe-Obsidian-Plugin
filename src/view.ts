@@ -1,13 +1,13 @@
 // [Guru, Librarian]
 
 import { Component, ItemView, MarkdownRenderer, Notice, TFile, WorkspaceLeaf, setIcon } from "obsidian";
-import { OutOfCredits, type ScribeApi, type SearchHit, type WhatNextScope } from "./api";
-import { type Billing, costLabel, creditsFor, parentOf, refusal, tagKey } from "./rules";
+import { OutOfCredits, PriceChanged, type Quote, type ScribeApi, type SearchHit, type WhatNextScope } from "./api";
+import { type Billing, JOBS, type Job, costLabel, parentOf, refusal, spentLine, subjectTarget, tagKey } from "./rules";
 import type { SyncEngine } from "./sync";
 
 export const MNEMO_VIEW = "mnemo-search";
 
-const TABS = ["Next", "Ask", "Details", "Related", "Search", "Themes", "Clients"] as const;
+const TABS = ["Topic", "Next", "Ask", "Details", "Related", "Search", "Themes", "Clients"] as const;
 type Tab = (typeof TABS)[number];
 
 /** Words are free and run as you type; meaning is a model call and is asked for. */
@@ -39,12 +39,12 @@ export type PanelDeps = {
  * note that is open, its folder, or the whole vault.
  *
  * Reading back what Scribe already wrote is free. A paid press names its
- * cost on the button, is refused here at zero credits with a way to top up,
+ * price on the button, quoted by Scribe before the press and taken exactly, is refused here at zero credits with a way to top up,
  * and goes through the same routes as the app, so the app's never-pay-twice
  * rules hold: the plugin has no AI of its own.
  */
 export class MnemoSearchView extends ItemView {
-  private tab: Tab = "Next";
+  private tab: Tab = "Topic";
   private body!: HTMLElement;
   private balance!: HTMLElement;
   private tabBar!: HTMLElement;
@@ -132,7 +132,8 @@ export class MnemoSearchView extends ItemView {
     void this.showBalance();
 
     try {
-      if (tab === "Next") await this.whatNext(api);
+      if (tab === "Topic") await this.topic(api);
+      else if (tab === "Next") await this.whatNext(api);
       else if (tab === "Ask") this.ask(api);
       else if (tab === "Details") await this.details(api);
       else if (tab === "Related") await this.related(api);
@@ -196,6 +197,102 @@ export class MnemoSearchView extends ItemView {
     }
   }
 
+  // — Topic ———————————————————————————————————————————————————
+
+  /**
+   * Work on a topic, as the app's home screen offers it: a job, a topic
+   * (typed, or one of the day's three, which offer only the jobs their notes
+   * support), and a narrowing by tags and dates. The price is on the button.
+   */
+  private async topic(api: ScribeApi) {
+    const form = this.body.createDiv();
+    const jobs = form.createDiv({ cls: "mnemo-row mnemo-scope" });
+    const input = form.createEl("input", { type: "text", cls: "mnemo-input", attr: { placeholder: "A topic, e.g. my kombucha batches", maxlength: "200" } });
+    const picks = form.createDiv({ cls: "mnemo-row mnemo-scope" });
+    const only = form.createEl("input", { type: "text", cls: "mnemo-input", attr: { placeholder: "Only notes tagged… (comma-separated)" } });
+    const not = form.createEl("input", { type: "text", cls: "mnemo-input", attr: { placeholder: "Leave out notes tagged…" } });
+    const dates = form.createDiv({ cls: "mnemo-row" });
+    dates.createSpan({ text: "From" });
+    const from = dates.createEl("input", { type: "date" });
+    dates.createSpan({ text: "to" });
+    const to = dates.createEl("input", { type: "date" });
+    const press = form.createEl("button", { cls: "mod-cta mnemo-wide", text: "Read" });
+    const why = form.createDiv({ cls: "mnemo-note" });
+    const area = this.body.createDiv();
+
+    let job: Job = "inspiration";
+    let allowed: readonly string[] | null = null;
+    let quote: Quote | null = null;
+    const list = (box: HTMLInputElement) => box.value.split(",").map((t) => t.trim()).filter(Boolean);
+    const narrow = () => ({ only: list(only), not: list(not), from: from.value, to: to.value });
+
+    const drawJobs = () => {
+      jobs.empty();
+      for (const [key, name] of JOBS) {
+        if (allowed && !allowed.includes(key)) continue;
+        const button = jobs.createEl("button", { text: name, cls: key === job ? "is-active" : "" });
+        button.onclick = () => {
+          job = key;
+          drawJobs();
+          void price();
+        };
+      }
+    };
+    // Priced on a stand-in topic: the wording never changes the price.
+    const price = async () => {
+      quote = await api.quoteReading("subject", subjectTarget(job, "topic", narrow())).catch(() => null);
+      press.setText(`Read${quote?.credits ? ` · ${quote.credits} credit${quote.credits === 1 ? "" : "s"}` : ""}`);
+      press.disabled = quote?.credits === null;
+      why.setText(
+        quote?.credits === null
+          ? "No notes are left after narrowing."
+          : quote?.credits
+            ? `${quote.credits} credits: one AI reading of ${quote.notes ?? 0} notes. You have ${quote.balance ?? 0}.`
+            : ""
+      );
+    };
+
+    input.addEventListener("input", () => {
+      allowed = null;
+      drawJobs();
+    });
+    for (const box of [only, not, from, to]) box.addEventListener("change", () => void price());
+    for (const pick of await api.suggestions().catch(() => [])) {
+      const button = picks.createEl("button", { text: pick.label });
+      button.onclick = () => {
+        input.value = pick.subject;
+        allowed = pick.jobs;
+        if (pick.jobs.length && !pick.jobs.includes(job)) job = pick.jobs[0] as Job;
+        drawJobs();
+        void price();
+      };
+    }
+
+    // The newest topic reading until one is asked.
+    let asked = "";
+    const show = () => this.reading(api, area, "subject", asked);
+    press.onclick = async () => {
+      const topic = input.value.trim();
+      if (!topic) return;
+      const no = refusal(await this.deps().billing().catch(() => null));
+      if (no) return this.refused(area, no);
+      asked = subjectTarget(job, topic, narrow());
+      try {
+        await api.pressWhatNext("subject", asked, quote?.credits ?? null);
+      } catch (err) {
+        if (err instanceof OutOfCredits) return this.refused(area, err.message);
+        if (err instanceof PriceChanged) void price();
+        new Notice(`Mnemo: ${(err as Error).message}`);
+      }
+      await show();
+      void this.showBalance();
+    };
+
+    drawJobs();
+    await price();
+    await show();
+  }
+
   // — What next ————————————————————————————————————————————————
 
   private async whatNextTarget(): Promise<{ scope: WhatNextScope; target: string; label: string } | null> {
@@ -226,40 +323,59 @@ export class MnemoSearchView extends ItemView {
       this.say(this.readingScope === "item" ? "Open a Scribe note to read it against the notes before it." : "This note sits in no folder.");
       return;
     }
+    await this.reading(api, this.body.createDiv(), target.scope, target.target, target.label);
+  }
 
-    const area = this.body.createDiv();
+  /**
+   * The reading last written for `scope` and `target`, each heading with its
+   * Elaborate at its quoted price; with `label`, the press for a new one too.
+   */
+  private async reading(api: ScribeApi, area: HTMLElement, scope: WhatNextScope, target: string, label?: string) {
     const billing = await this.deps().billing().catch(() => null);
-    const rate = (op: string) => creditsFor(billing?.rates.find((r) => r.operation === op), 1);
+    const cost = (quote: Quote | null) => costLabel(billing, quote?.credits ?? null);
+    const why = (quote: Quote | null, into: HTMLElement) => {
+      if (quote?.credits) this.say(`${quote.credits} credits: one AI reading of ${quote.notes ?? 0} notes. You have ${quote.balance ?? 0}.`, into);
+    };
 
     const draw = async () => {
       area.empty();
-      const state = await api.whatNext(target.scope, target.target);
+      const state = await api.whatNext(scope, target);
       const running = state.reading?.status === "running" || state.more.some((m) => m.status === "running");
+      const done = state.reading?.status === "done" ? state.reading : null;
 
       if (state.failed) this.say(state.failed === "declined" ? "Google declined to read these notes." : "The last reading failed; nothing was charged.", area);
 
-      const press = area.createEl("button", {
-        cls: "mod-cta mnemo-wide",
-        text: running ? "Reading…" : `${state.reading ? "Read again" : "Read"} ${target.label}${costLabel(billing, rate("what_next"))}`,
-      });
-      press.disabled = running;
-      press.onclick = () => void pressed(undefined);
+      if (label !== undefined) {
+        const quote = await api.quoteReading(scope, target).catch(() => null);
+        const press = area.createEl("button", {
+          cls: "mod-cta mnemo-wide",
+          text: running ? "Reading…" : `${state.reading ? "Read again" : "Read"} ${label}${cost(quote)}`,
+        });
+        press.disabled = running || quote?.credits === null;
+        press.onclick = () => void pressed(quote, undefined);
+        why(quote, area);
+      }
 
-      const done = state.reading?.status === "done" ? state.reading : null;
       if (done?.reading) {
+        const spent = spentLine(done.spent);
+        if (spent) this.say(spent, area);
+        const elaborateQuote = await api.quoteReading(scope, done.target ?? target, done.id).catch(() => null);
         for (const section of readingSections(done.reading)) {
           const block = area.createDiv({ cls: "mnemo-section" });
           await this.markdown([section.heading ? `### ${section.heading}` : "", section.body].filter(Boolean).join("\n\n"), block);
           if (!section.heading) continue;
           const more = state.more.find((m) => m.part === section.heading && m.status !== "failed");
           if (more?.status === "done" && more.reading) {
-            await this.markdown(more.reading, block.createDiv({ cls: "mnemo-more" }));
+            const box = block.createDiv({ cls: "mnemo-more" });
+            await this.markdown(more.reading, box);
+            const spent = spentLine(more.spent);
+            if (spent) this.say(spent, box);
           } else {
             const elaborate = block.createEl("button", {
-              text: more?.status === "running" ? "Reading…" : `Elaborate${costLabel(billing, rate("elaborate"))}`,
+              text: more?.status === "running" ? "Reading…" : `Elaborate${cost(elaborateQuote)}`,
             });
             elaborate.disabled = more?.status === "running" || running;
-            elaborate.onclick = () => void pressed({ parentId: done.id, part: section.heading! });
+            elaborate.onclick = () => void pressed(elaborateQuote, { parentId: done.id, part: section.heading! }, done.target ?? target);
           }
         }
       } else if (!running) {
@@ -270,11 +386,11 @@ export class MnemoSearchView extends ItemView {
       else this.stopPolling();
     };
 
-    const pressed = async (more?: { parentId: string; part: string }) => {
+    const pressed = async (quote: Quote | null, more?: { parentId: string; part: string }, on = target) => {
       const no = refusal(await this.deps().billing().catch(() => null));
       if (no) return this.refused(area, no);
       try {
-        await api.pressWhatNext(target.scope, target.target, more);
+        await api.pressWhatNext(scope, on, quote?.credits ?? null, more);
       } catch (err) {
         if (err instanceof OutOfCredits) return this.refused(area, err.message);
         new Notice(`Mnemo: ${(err as Error).message}`);
@@ -303,10 +419,15 @@ export class MnemoSearchView extends ItemView {
     const button = this.body.createEl("button", { cls: "mod-cta mnemo-wide", text: "Ask" });
     const out = this.body.createDiv();
 
-    void this.deps()
-      .billing()
-      .catch(() => null)
-      .then((billing) => button.setText(`Ask${costLabel(billing, creditsFor(billing?.rates.find((r) => r.operation === "answer"), 1))}`));
+    // The price moves with the store, never with the question.
+    let quote: Quote | null = null;
+    const price = async () => {
+      const billing = await this.deps().billing().catch(() => null);
+      quote = await api.quoteAsk().catch(() => null);
+      button.setText(`Ask${costLabel(billing, quote?.credits ?? null)}`);
+      button.setAttr("title", quote?.credits ? `${quote.credits} credits: one AI answer written from your notes. You have ${quote.balance ?? 0}.` : "");
+    };
+    void price();
 
     button.onclick = async () => {
       const question = box.value.trim();
@@ -318,7 +439,7 @@ export class MnemoSearchView extends ItemView {
       button.disabled = true;
       this.say("Reading your notes…", out);
       try {
-        const result = await api.ask(question);
+        const result = await api.ask(question, quote?.credits ?? null);
         out.empty();
         if (!result.answer) {
           this.say(result.declined ? "Google declined to answer from these notes." : "No answer: nothing in the notes matched.", out);
@@ -336,11 +457,14 @@ export class MnemoSearchView extends ItemView {
           const link = para.createEl("a", { text: part, attr: { "aria-label": cited.label } });
           link.onclick = () => void this.openById(cited.id);
         }
+        const spent = spentLine(result.spent);
+        if (spent) this.say(spent, out);
         void this.showBalance();
       } catch (err) {
         out.empty();
         if (err instanceof OutOfCredits) this.refused(out, err.message);
         else this.say((err as Error).message, out);
+        if (err instanceof PriceChanged) void price();
       } finally {
         button.disabled = false;
       }

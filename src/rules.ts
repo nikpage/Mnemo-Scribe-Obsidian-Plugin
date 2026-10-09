@@ -162,21 +162,59 @@ export function refusal(billing: Billing | null): string | null {
 
 /** How a cost reads on a button: nothing for an account that does not pay in credits. */
 export function costLabel(billing: Billing | null, credits: number | null): string {
-  if (!billing?.paysInCredits || credits === null) return "";
+  if (!billing?.paysInCredits || !credits) return "";
   return ` · ${credits} credit${credits === 1 ? "" : "s"}`;
 }
 
-export type Rate = { operation: string; credits: number | string; per: number | string };
-
-/** Credits for `units` at a rate, rounded up, as `creditsFor()` on the server. */
-export function creditsFor(rate: Rate | undefined, units: number): number | null {
-  if (!rate) return null;
-  if (!(units > 0)) return 0;
-  return Math.ceil((units / Number(rate.per)) * Number(rate.credits));
+/** What a call really cost, as the owner reads it under a reading or an answer. */
+export function spentLine(spent?: { costUsd: number; readTokens: number; wroteTokens: number }): string | null {
+  return spent ? `Real: $${spent.costUsd.toFixed(4)} · read ${spent.readTokens} · wrote ${spent.wroteTokens} tokens` : null;
 }
 
-/** An import's cost: each file is charged by its own words. */
-export function importCost(rate: Rate | undefined, wordsPerFile: number[]): number | null {
-  if (!rate) return null;
-  return wordsPerFile.reduce((sum, words) => sum + (creditsFor(rate, words) ?? 0), 0);
+/**
+ * What a person can do on a topic, as the app offers them, each the stored
+ * job key and its name.
+ */
+export const JOBS = [
+  ["inspiration", "Write more"],
+  ["next-best", "Improve"],
+  ["study", "Learn"],
+  ["log", "Review progress"],
+] as const;
+export type Job = (typeof JOBS)[number][0];
+
+/** One tag as the app stores it (`normalizeSegment()` in the app's `filing.ts`). */
+export function tagSpelling(raw: string): string {
+  return raw
+    .normalize("NFC")
+    .replace(/^#/, "")
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_]+/g, "-")
+    .replace(/[^\p{L}\p{N}-]+/gu, "")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+export type Narrow = { only?: string[]; not?: string[]; from?: string; to?: string };
+
+const DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * A topic reading's target, spelled as the app spells it (`subjectTarget()`
+ * in its `what-next-target.ts`): "<job>:<topic>", then the narrowing on a
+ * second line when there is any.
+ */
+export function subjectTarget(job: Job, topic: string, narrow: Narrow = {}): string {
+  const head = `${job}:${topic.replace(/\s+/g, " ").trim()}`;
+  const tags = (list: string[] = []) => [...new Set(list.map(tagSpelling).filter(Boolean))];
+  const only = tags(narrow.only).sort();
+  const not = tags(narrow.not).filter((tag) => !only.includes(tag)).sort();
+  const p = new URLSearchParams();
+  if (only.length) p.set("only", only.join(","));
+  if (not.length) p.set("not", not.join(","));
+  if (narrow.from && DATE.test(narrow.from)) p.set("from", narrow.from);
+  if (narrow.to && DATE.test(narrow.to)) p.set("to", narrow.to);
+  const tail = p.toString();
+  return tail ? `${head}\n${tail}` : head;
 }

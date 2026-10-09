@@ -62,11 +62,17 @@ export type Fact = {
   confidence: number;
 };
 
-export type Reading = { id: string; part: string | null; status: "running" | "done" | "failed"; reading: string | null };
+/** What a call really cost; Scribe sends it to the owner's account alone. */
+export type Spent = { costUsd: number; readTokens: number; wroteTokens: number };
+export type Reading = { id: string; target?: string; spent?: Spent; part: string | null; status: "running" | "done" | "failed"; reading: string | null };
 export type WhatNext = { reading: Reading | null; failed: string | null; more: Reading[] };
-export type WhatNextScope = "overview" | "tags" | "item";
+export type WhatNextScope = "overview" | "tags" | "item" | "subject";
+/** A press's price before it is pressed; `credits` null = nothing to read, 0 = an own-key account. */
+export type Quote = { credits: number | null; balance: number | null; notes?: number };
+/** One of the day's suggested topics, with the jobs its notes support. */
+export type Suggestion = { label: string; subject: string; jobs: string[] };
 
-export type Answer = { answer: string | null; cited: { id: string; label: string }[]; noCredits?: boolean; declined?: boolean };
+export type Answer = { answer: string | null; cited: { id: string; label: string }[]; noCredits?: boolean; declined?: boolean; priceChanged?: number; spent?: Spent };
 export type Theme = { id: string; name: string; body: string };
 export type Subject = { id: string; name: string; archived?: boolean; notes: number };
 export type SubjectNote = { id: string; label: string; recorded_at: string };
@@ -75,6 +81,13 @@ export type BillingInfo = {
   paysInCredits: boolean;
   rates: { operation: string; credits: number | string; per: number | string; unit: string }[];
 };
+
+/** The price moved since it was shown: nothing ran, nothing was taken. */
+export class PriceChanged extends Error {
+  constructor(public readonly credits: number) {
+    super(`The price changed to ${credits} credit${credits === 1 ? "" : "s"}. Press again to accept it.`);
+  }
+}
 
 /** Refused at zero credits: said plainly, with where to top up. */
 export class OutOfCredits extends Error {
@@ -87,6 +100,8 @@ export class OutOfCredits extends Error {
 export type IngestResult = {
   imported: { file: string; id: string; title: string; path: string; tags: string[] }[];
   failed: { file: string; error: string }[];
+  /** Set when the price differs from the one shown: nothing was imported. */
+  priceChanged?: number;
 };
 
 /**
@@ -148,6 +163,7 @@ function answer<T>(res: { status: number; json: unknown; text: string }): T {
   };
   if (res.status === 401) throw new Error("Token rejected — reconnect this device in Scribe.");
   if (res.status === 402) throw new OutOfCredits();
+  if (res.status === 412) throw new PriceChanged(Number((res.json as { credits?: number })?.credits));
   if (res.status >= 400) throw new Error(said() || `Scribe returned ${res.status}`);
   return res.json as T;
 }
@@ -204,8 +220,8 @@ export class ScribeApi {
    * The folder they sit in goes with them, so its words become the note's
    * tags rather than whatever a model would guess.
    */
-  async ingest(files: { name: string; data: ArrayBuffer }[], folder: string): Promise<IngestResult> {
-    const { body, contentType } = multipart(files, folder ? { folder } : {});
+  async ingest(files: { name: string; data: ArrayBuffer }[], folder: string, credits: number): Promise<IngestResult> {
+    const { body, contentType } = multipart(files, { ...(folder ? { folder } : {}), credits: String(credits) });
     const res = await requestUrl({
       url: this.url("/api/notes/import"),
       method: "POST",
@@ -215,6 +231,23 @@ export class ScribeApi {
     });
 
     return answer<IngestResult>(res);
+  }
+
+  /**
+   * What importing these files will cost, before anything is sent to a
+   * model. Free. The import takes exactly this, or nothing.
+   */
+  async importQuote(files: { name: string; data: ArrayBuffer }[]): Promise<{ credits: number; balance: number }> {
+    const { body, contentType } = multipart(files, {});
+    const res = await requestUrl({
+      url: this.url("/api/notes/import/quote"),
+      method: "POST",
+      headers: { Authorization: `Bearer ${this.token}`, "Content-Type": contentType },
+      body,
+      throw: false,
+    });
+
+    return answer<{ credits: number; balance: number }>(res);
   }
 
   /**
@@ -266,19 +299,39 @@ export class ScribeApi {
     return this.call<WhatNext>(`/api/notes/what-next?${params}`);
   }
 
-  /** A paid press; the reading is written in the background and read back by `whatNext()`. */
-  pressWhatNext(scope: WhatNextScope, target: string, more?: { parentId: string; part: string }): Promise<{ readingId: string }> {
+  /** What a press will cost, free: `parentId` prices an Elaborate of that reading. */
+  quoteReading(scope: WhatNextScope, target: string, parentId?: string): Promise<Quote> {
+    const params = new URLSearchParams({ scope, target, ...(parentId ? { parentId } : {}) });
+    return this.call<Quote>(`/api/notes/what-next/quote?${params}`);
+  }
+
+  /** The day's three suggested topics. */
+  async suggestions(): Promise<Suggestion[]> {
+    return (await this.call<{ suggestions: Suggestion[] }>("/api/notes/what-next/suggest")).suggestions || [];
+  }
+
+  /**
+   * A paid press at `credits`, the price shown; the reading is written in
+   * the background and read back by `whatNext()`.
+   */
+  pressWhatNext(scope: WhatNextScope, target: string, credits: number | null, more?: { parentId: string; part: string }): Promise<{ readingId: string }> {
     return this.call<{ readingId: string }>("/api/notes/what-next", {
       method: "POST",
-      body: { scope, target, ...(more || {}) },
+      body: { scope, target, ...(more || {}), ...(credits === null ? {} : { credits }) },
     });
   }
 
-  /** A written answer from the notes; each [n] in it is `cited[n - 1]`. */
-  async ask(question: string): Promise<Answer> {
-    const params = new URLSearchParams({ q: question, fuzzy: "1", answer: "1" });
+  /** What a written answer will cost, free. */
+  quoteAsk(): Promise<Quote> {
+    return this.call<Quote>("/api/notes/search/quote");
+  }
+
+  /** A written answer from the notes at `credits`, the price shown; each [n] in it is `cited[n - 1]`. */
+  async ask(question: string, credits: number | null): Promise<Answer> {
+    const params = new URLSearchParams({ q: question, fuzzy: "1", answer: "1", ...(credits === null ? {} : { credits: String(credits) }) });
     const result = await this.call<Answer>(`/api/notes/search?${params}`);
     if (result.noCredits) throw new OutOfCredits();
+    if (result.priceChanged !== undefined) throw new PriceChanged(result.priceChanged);
     return { ...result, cited: result.cited || [] };
   }
 

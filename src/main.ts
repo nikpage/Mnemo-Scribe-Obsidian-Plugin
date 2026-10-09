@@ -21,7 +21,6 @@ import {
   afterDelete,
   costLabel,
   emptyState,
-  importCost,
   parentOf,
   refusal,
 } from "./rules";
@@ -291,8 +290,8 @@ export default class MnemoPlugin extends Plugin {
   }
 
   /**
-   * Import, on a yes. Each file costs credits by its words, so the count and
-   * the cost are said before anything is sent.
+   * Import, on a yes. The server prices each file by what the AI will read,
+   * and that price is said before anything is sent; the import takes it.
    */
   async importNew(within?: string) {
     const api = this.api();
@@ -310,16 +309,16 @@ export default class MnemoPlugin extends Plugin {
     }
 
     const billing = await this.billing(true).catch(() => null);
-    const words = await Promise.all(
-      files.map(async (file) => (await this.app.vault.cachedRead(file)).split(/\s+/).filter(Boolean).length)
-    );
-    const cost = importCost(billing?.rates.find((r) => r.operation === "import"), words);
+    let quote: { credits: number; balance: number; each: number[] };
+    try {
+      quote = await engine.quoteImport(files);
+    } catch (err) {
+      new Notice(`Mnemo: could not price the import — ${(err as Error).message}`);
+      return;
+    }
+    const cost = quote.credits;
     const no = refusal(billing);
-    const detail = billing?.paysInCredits
-      ? cost === null
-        ? `You have ${billing.credits} credits.`
-        : `About ${cost} credit${cost === 1 ? "" : "s"}; you have ${billing.credits}.`
-      : "";
+    const detail = billing?.paysInCredits ? `${cost} credit${cost === 1 ? "" : "s"}; you have ${quote.balance}.` : "";
 
     const yes = await new Promise<boolean>((resolve) =>
       new AskModal(
@@ -336,7 +335,7 @@ export default class MnemoPlugin extends Plugin {
     this.running = true;
     this.setStatus(`importing ${files.length}…`);
     try {
-      const { imported, failed } = await engine.importFiles(files);
+      const { imported, failed } = await engine.importFiles(files, quote.each);
       await this.save();
       new Notice(
         `Mnemo: imported ${imported} file${imported === 1 ? "" : "s"}` +

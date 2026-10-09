@@ -351,13 +351,22 @@ export class SyncEngine {
   }
 
   /**
-   * Files written in the vault, made into notes.
-   *
-   * The folder a file sits in goes up with it, so its words become the
-   * note's tags. The note is pulled straight back and written over the same
-   * file, where it stands, so an import never leaves two copies.
+   * What importing `files` will cost, batch by batch exactly as
+   * `importFiles()` sends them, so each batch takes its own quote.
    */
-  async importFiles(files: TFile[]): Promise<{ imported: number; failed: Failure[] }> {
+  async quoteImport(files: TFile[]): Promise<{ credits: number; balance: number; each: number[] }> {
+    const each: number[] = [];
+    let balance = 0;
+    for (const { batch } of this.batches(files)) {
+      const quoted = await this.api.importQuote(await this.payload(batch));
+      each.push(quoted.credits);
+      balance = quoted.balance;
+    }
+    return { credits: each.reduce((sum, credits) => sum + credits, 0), balance, each };
+  }
+
+  /** The import's requests, in order: one folder each, at most `BATCH` files. */
+  private batches(files: TFile[]): { folder: string; batch: TFile[] }[] {
     const byFolder = new Map<string, TFile[]>();
     for (const file of files) {
       const folder = parentOf(file.path);
@@ -365,36 +374,52 @@ export class SyncEngine {
       if (group) group.push(file);
       else byFolder.set(folder, [file]);
     }
+    const out: { folder: string; batch: TFile[] }[] = [];
+    for (const [folder, group] of byFolder) {
+      for (let at = 0; at < group.length; at += BATCH) out.push({ folder, batch: group.slice(at, at + BATCH) });
+    }
+    return out;
+  }
 
+  private payload(batch: TFile[]): Promise<{ name: string; data: ArrayBuffer }[]> {
+    return Promise.all(batch.map(async (file) => ({ name: file.name, data: await this.vault.readBinary(file) })));
+  }
+
+  /**
+   * Files written in the vault, made into notes.
+   *
+   * The folder a file sits in goes up with it, so its words become the
+   * note's tags. The note is pulled straight back and written over the same
+   * file, where it stands, so an import never leaves two copies.
+   */
+  async importFiles(files: TFile[], prices: number[]): Promise<{ imported: number; failed: Failure[] }> {
     const added = new Set<string>();
     const failed: Failure[] = [];
 
-    for (const [folder, group] of byFolder) {
-      for (let at = 0; at < group.length; at += BATCH) {
-        const batch = group.slice(at, at + BATCH);
-        const payload = await Promise.all(
-          batch.map(async (file) => ({ name: file.name, data: await this.vault.readBinary(file) }))
-        );
+    for (const [at, { folder, batch }] of this.batches(files).entries()) {
+      const payload = await this.payload(batch);
 
-        const result = await this.api.ingest(payload, folder);
-        failed.push(...result.failed);
+      const result = await this.api.ingest(payload, folder, prices[at] ?? 0);
+      if (result.priceChanged !== undefined) {
+        for (const file of batch) failed.push({ file: file.name, error: `price changed to ${result.priceChanged} credits; import again` });
+      }
+      failed.push(...result.failed);
 
-        for (const note of result.imported) {
-          // The server echoes the name it was sent, but a name is a weak key:
-          // an encoding difference in one filename must not cost the note its
-          // file, or the next pull writes it fresh and the vault holds two.
-          const original =
-            batch.find((file) => file.name === note.file) ||
-            batch.find((file) => file.name.normalize("NFC") === note.file.normalize("NFC"));
+      for (const note of result.imported) {
+        // The server echoes the name it was sent, but a name is a weak key:
+        // an encoding difference in one filename must not cost the note its
+        // file, or the next pull writes it fresh and the vault holds two.
+        const original =
+          batch.find((file) => file.name === note.file) ||
+          batch.find((file) => file.name.normalize("NFC") === note.file.normalize("NFC"));
 
-          // Claimed at rev 0 — behind the server, so the pull below rewrites
-          // this very file rather than writing a second one.
-          if (original) this.state.notes[note.id] = { file: original.path, rev: 0, hash: "", folder: folder };
+        // Claimed at rev 0 — behind the server, so the pull below rewrites
+        // this very file rather than writing a second one.
+        if (original) this.state.notes[note.id] = { file: original.path, rev: 0, hash: "", folder: folder };
 
-          const fresh = await this.api.pullOne(note.id);
-          if (fresh) await this.write(fresh);
-          added.add(note.id);
-        }
+        const fresh = await this.api.pullOne(note.id);
+        if (fresh) await this.write(fresh);
+        added.add(note.id);
       }
     }
 
