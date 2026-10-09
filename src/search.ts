@@ -25,7 +25,7 @@ export class MnemoSearchModal extends SuggestModal<SearchHit> {
     private afterChange: () => Promise<void>
   ) {
     super(app);
-    this.setPlaceholder("Search Scribe notes…");
+    this.setPlaceholder("Search Mnemo Scribe notes…");
     this.setInstructions([
       { command: "↑↓", purpose: "navigate" },
       { command: "↵", purpose: "open" },
@@ -60,7 +60,7 @@ export class MnemoSearchModal extends SuggestModal<SearchHit> {
     try {
       return await this.api.search(text, this.byMeaning);
     } catch (err) {
-      new Notice(`Mnemo: ${(err as Error).message}`);
+      new Notice(`Mnemo Scribe: ${(err as Error).message}`);
       return [];
     }
   }
@@ -79,13 +79,13 @@ export class MnemoSearchModal extends SuggestModal<SearchHit> {
       const path = await this.sync.pullOne(hit.note.id);
       await this.afterChange();
       if (!path) {
-        new Notice("Mnemo: that note could not be fetched.");
+        new Notice("Mnemo Scribe: that note could not be fetched.");
         return;
       }
       const file = this.app.vault.getAbstractFileByPath(path);
       if (file instanceof TFile) await this.app.workspace.getLeaf(false).openFile(file);
     } catch (err) {
-      new Notice(`Mnemo: ${(err as Error).message}`);
+      new Notice(`Mnemo Scribe: ${(err as Error).message}`);
     }
   }
 }

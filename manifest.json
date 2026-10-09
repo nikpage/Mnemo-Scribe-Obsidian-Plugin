@@ -1,9 +1,9 @@
 {
   "id": "mnemo-scribe",
-  "name": "Mnemo",
-  "version": "0.3.1",
+  "name": "Mnemo Scribe",
+  "version": "0.4.0",
   "minAppVersion": "1.5.7",
-  "description": "Voice notes recorded in Scribe appear in this vault, edits go back, and search finds them by meaning.",
-  "author": "Scribe",
+  "description": "Voice notes recorded in Mnemo Scribe appear in this vault, edits go back, and a panel asks, reads and searches them.",
+  "author": "Mnemo Scribe",
   "isDesktopOnly": false
 }

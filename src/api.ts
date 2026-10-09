@@ -1,12 +1,22 @@
 // [Smith]
 
-import { requestUrl } from "obsidian";
-
 /**
- * Talking to Scribe. Obsidian's own `requestUrl` is used rather than fetch
- * because it goes out from the app itself, desktop and phone, so no CORS
- * header has to exist on the server for a vault to be allowed to ask.
+ * Talking to Scribe, from any app that holds a device token.
+ *
+ * Nothing here knows which app it runs in: each one hands over how it sends
+ * a request (`Http`). Obsidian uses its own `requestUrl`, which goes out from
+ * the app itself; Joplin uses fetch from its plugin frame, which is why the
+ * token routes answer cross-origin requests (`next.config.ts`).
  */
+
+export type HttpRequest = {
+  url: string;
+  method: string;
+  headers: Record<string, string>;
+  body?: string | ArrayBuffer;
+};
+export type HttpResponse = { status: number; json: unknown; text: string };
+export type Http = (request: HttpRequest) => Promise<HttpResponse>;
 
 export type RemoteNote = {
   id: string;
@@ -64,7 +74,9 @@ export type Fact = {
 
 /** What a call really cost; Scribe sends it to the owner's account alone. */
 export type Spent = { costUsd: number; readTokens: number; wroteTokens: number };
-export type Reading = { id: string; target?: string; spent?: Spent; part: string | null; status: "running" | "done" | "failed"; reading: string | null };
+export type Reading = { id: string; target?: string; spent?: Spent; part: string | null; status: "running" | "done" | "failed"; reading: string | null; created_at?: string };
+/** An earlier reading, one line: what it was of and when. */
+export type Earlier = { id: string; scope: WhatNextScope; target: string; created_at: string };
 export type WhatNext = { reading: Reading | null; failed: string | null; more: Reading[] };
 export type WhatNextScope = "overview" | "tags" | "item" | "subject";
 /** A press's price before it is pressed; `credits` null = nothing to read, 0 = an own-key account. */
@@ -91,7 +103,7 @@ export class PriceChanged extends Error {
 
 /** Refused at zero credits: said plainly, with where to top up. */
 export class OutOfCredits extends Error {
-  constructor(message = "Out of credits. Top up in Scribe to keep going.") {
+  constructor(message = "Out of credits. Top up in Mnemo Scribe to keep going.") {
     super(message);
     this.name = "OutOfCredits";
   }
@@ -107,9 +119,9 @@ export type IngestResult = {
 /**
  * A file upload, built by hand.
  *
- * `requestUrl` takes bytes, not a FormData — it is Obsidian's own HTTP call
- * rather than the browser's — so the multipart body is assembled here. The
- * boundary is random for the same reason it always is: it must not occur in
+ * Obsidian's `requestUrl` takes bytes, not a FormData — it is the app's own
+ * HTTP call rather than the browser's — so the multipart body is assembled
+ * here, the same for every app. The boundary is random for the same reason it always is: it must not occur in
  * anything being sent.
  */
 function multipart(
@@ -153,26 +165,26 @@ function multipart(
 }
 
 /** One reply read the same way everywhere: 401, 402 and any other refusal said in words. */
-function answer<T>(res: { status: number; json: unknown; text: string }): T {
-  const said = () => {
-    try {
-      return (res.json as { error?: string })?.error;
-    } catch {
-      return undefined;
-    }
-  };
-  if (res.status === 401) throw new Error("Token rejected — reconnect this device in Scribe.");
+function answer<T>(res: HttpResponse): T {
+  const said = () => (res.json as { error?: string } | undefined)?.error;
+  if (res.status === 401) throw new Error("Token rejected — reconnect this device in Mnemo Scribe.");
   if (res.status === 402) throw new OutOfCredits();
   if (res.status === 412) throw new PriceChanged(Number((res.json as { credits?: number })?.credits));
-  if (res.status >= 400) throw new Error(said() || `Scribe returned ${res.status}`);
+  if (res.status >= 400) throw Object.assign(new Error(said() || `Mnemo Scribe returned ${res.status}`), { status: res.status });
   return res.json as T;
 }
 
 export class ScribeApi {
   constructor(
     private baseUrl: string,
-    private token: string
+    private token: string,
+    private http: Http
   ) {}
+
+  /** Where and how this device talks to Scribe, for the app's screens (`app/http.ts`). */
+  connection(): { baseUrl: string; token: string; http: Http } {
+    return { baseUrl: this.baseUrl, token: this.token, http: this.http };
+  }
 
   private url(path: string): string {
     return `${this.baseUrl.replace(/\/+$/, "")}${path}`;
@@ -184,7 +196,8 @@ export class ScribeApi {
   }
 
   private async call<T>(path: string, init: { method?: string; body?: unknown } = {}): Promise<T> {
-    const res = await requestUrl({
+    // A 401 is an answer, not a crash: it means the token was revoked.
+    const res = await this.http({
       url: this.url(path),
       method: init.method || "GET",
       headers: {
@@ -192,8 +205,6 @@ export class ScribeApi {
         ...(init.body ? { "Content-Type": "application/json" } : {}),
       },
       body: init.body ? JSON.stringify(init.body) : undefined,
-      // A 401 is an answer, not a crash: it means the token was revoked.
-      throw: false,
     });
 
     return answer<T>(res);
@@ -222,12 +233,11 @@ export class ScribeApi {
    */
   async ingest(files: { name: string; data: ArrayBuffer }[], folder: string, credits: number): Promise<IngestResult> {
     const { body, contentType } = multipart(files, { ...(folder ? { folder } : {}), credits: String(credits) });
-    const res = await requestUrl({
+    const res = await this.http({
       url: this.url("/api/notes/import"),
       method: "POST",
       headers: { Authorization: `Bearer ${this.token}`, "Content-Type": contentType },
       body,
-      throw: false,
     });
 
     return answer<IngestResult>(res);
@@ -239,12 +249,11 @@ export class ScribeApi {
    */
   async importQuote(files: { name: string; data: ArrayBuffer }[]): Promise<{ credits: number; balance: number }> {
     const { body, contentType } = multipart(files, {});
-    const res = await requestUrl({
+    const res = await this.http({
       url: this.url("/api/notes/import/quote"),
       method: "POST",
       headers: { Authorization: `Bearer ${this.token}`, "Content-Type": contentType },
       body,
-      throw: false,
     });
 
     return answer<{ credits: number; balance: number }>(res);
@@ -297,6 +306,11 @@ export class ScribeApi {
   whatNext(scope: WhatNextScope, target: string): Promise<WhatNext> {
     const params = new URLSearchParams({ scope, target });
     return this.call<WhatNext>(`/api/notes/what-next?${params}`);
+  }
+
+  /** The earlier readings, newest first, one line each; no text until one is opened. */
+  async earlier(): Promise<Earlier[]> {
+    return (await this.call<{ readings: Earlier[] }>("/api/notes/what-next?history=1")).readings || [];
   }
 
   /** What a press will cost, free: `parentId` prices an Elaborate of that reading. */
@@ -378,14 +392,13 @@ export class ScribeApi {
       method: "POST",
       body: { recordingId: id, filename },
     });
-    if (!signed.signedUrl) throw new Error("This Scribe is too old to take recordings from Obsidian.");
+    if (!signed.signedUrl) throw new Error("This Mnemo Scribe is too old to take recordings from this app.");
 
-    const res = await requestUrl({
+    const res = await this.http({
       url: signed.signedUrl,
       method: "PUT",
       headers: { "Content-Type": type, "x-upsert": "true" },
       body: audio,
-      throw: false,
     });
     if (res.status >= 400) throw new Error(`Upload failed (${res.status})`);
 
@@ -394,12 +407,11 @@ export class ScribeApi {
 
   /** Starts the paid transcription. A 409 means it is already under way, which is fine. */
   async transcribe(id: string): Promise<void> {
-    const res = await requestUrl({
+    const res = await this.http({
       url: this.url("/api/transcribe"),
       method: "POST",
       headers: { Authorization: `Bearer ${this.token}`, "Content-Type": "application/json" },
       body: JSON.stringify({ recordingId: id }),
-      throw: false,
     });
     if (res.status === 409) return;
     answer(res);

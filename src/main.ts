@@ -27,6 +27,7 @@ import {
 import { MnemoSearchModal } from "./search";
 import { MNEMO_VIEW, MnemoSearchView } from "./view";
 import { RecordModal, Recordings } from "./record";
+import { obsidianHttp } from "./http";
 
 /**
  * Mnemo — Scribe in Obsidian, desktop and phone.
@@ -64,7 +65,7 @@ const DEFAULTS: ScribeSettings = {
   baseUrl: SCRIBE,
   token: "",
   synced: [],
-  inbox: "From Scribe",
+  inbox: "From Mnemo Scribe",
   minShared: 2,
   ratio: 1.5,
   interval: 5,
@@ -139,7 +140,7 @@ export default class MnemoPlugin extends Plugin {
     this.recordings = new Recordings(this.app.vault.adapter, normalizePath(this.manifest.dir ?? `${this.app.vault.configDir}/plugins/mnemo-scribe`));
 
     this.addCommand({ id: "sync-now", name: "Sync now", callback: () => void this.run("both", true) });
-    this.addCommand({ id: "import-new", name: "Import new files into Scribe", callback: () => void this.importNew() });
+    this.addCommand({ id: "import-new", name: "Import new files into Mnemo Scribe", callback: () => void this.importNew() });
     this.addCommand({
       id: "search",
       name: "Search notes",
@@ -147,22 +148,34 @@ export default class MnemoPlugin extends Plugin {
       // one. A person sets their own under Settings → Hotkeys.
       callback: () => this.openSearch(),
     });
-    this.addCommand({ id: "open-panel", name: "Open Mnemo panel", callback: () => void this.showPanel() });
+    this.addCommand({ id: "open-panel", name: "Open the Mnemo Scribe panel", callback: () => void this.showPanel() });
     this.addCommand({ id: "record", name: "Record a note", callback: () => void this.record() });
 
     this.registerView(
       MNEMO_VIEW,
       (leaf) =>
-        new MnemoSearchView(
-          leaf,
-          () => ({ api: this.api(), sync: this.engineNow(), billing: () => this.billing() }),
-          () => this.save(),
-          () => void this.run("both", true)
-        )
+        new MnemoSearchView(leaf, {
+          api: () => this.api(),
+          sync: () => this.engineNow(),
+          connect: async (token) => {
+            this.settings.token = token.trim();
+            this.resetEngine();
+            await this.save();
+            void this.run("both");
+          },
+          status: () => ({ text: this.statusText, choose: Boolean(this.settings.token) && this.settings.synced.length === 0 }),
+          syncNow: () => this.run("both", true),
+          record: () => void this.record(),
+          folders: () => this.vaultFolders(),
+          synced: () => this.settings.synced,
+          tick: (folder, on) => this.tick(folder, on),
+          importNew: () => this.importNew(),
+          afterChange: () => this.save(),
+        })
     );
 
-    this.addRibbonIcon("brain", "Mnemo: Scribe panel", () => void this.showPanel());
-    this.addRibbonIcon("mic", "Mnemo: record a note", () => void this.record());
+    this.addRibbonIcon("brain", "Mnemo Scribe: panel", () => void this.showPanel());
+    this.addRibbonIcon("mic", "Mnemo Scribe: record a note", () => void this.record());
 
     // An edit in a synced folder is a note to send back, once the typing
     // stops. Every other file in the vault is none of this plugin's business.
@@ -210,7 +223,7 @@ export default class MnemoPlugin extends Plugin {
         }
       });
     } catch (err) {
-      console.error("Mnemo: startup failed", err);
+      console.error("Mnemo Scribe: startup failed", err);
       this.setStatus("settings not loaded");
     }
   }
@@ -239,10 +252,10 @@ export default class MnemoPlugin extends Plugin {
     const title = path.split("/").pop()!.replace(/\.md$/, "");
     new AskModal(
       this.app,
-      `Also delete "${title}" from Scribe?`,
-      "Yes deletes the note, its audio and its transcript in Scribe. No keeps it there and stops syncing it to this vault.",
-      "Delete in Scribe",
-      "Keep in Scribe",
+      `Also delete "${title}" from Mnemo Scribe?`,
+      "Yes deletes the note, its audio and its transcript in Mnemo Scribe. No keeps it there and stops syncing it to this vault.",
+      "Delete in Mnemo Scribe",
+      "Keep in Mnemo Scribe",
       async (yes) => {
         try {
           if (yes) await this.api()?.deleteNote(id);
@@ -250,7 +263,7 @@ export default class MnemoPlugin extends Plugin {
         } catch (err) {
           // Not deleted there: kept, and not written back here either.
           afterDelete(this.state, id, false);
-          new Notice(`Mnemo: not deleted in Scribe — ${(err as Error).message}`);
+          new Notice(`Mnemo Scribe: not deleted in Mnemo Scribe — ${(err as Error).message}`);
         }
         await this.save();
       }
@@ -261,13 +274,13 @@ export default class MnemoPlugin extends Plugin {
   async record() {
     const api = this.api();
     if (!api) {
-      new Notice("Mnemo: paste your device token in settings first.");
+      new Notice("Mnemo Scribe: paste your device token in settings first.");
       return;
     }
     const billing = await this.billing(true).catch(() => null);
     const no = refusal(billing);
     if (no) {
-      new Notice(`Mnemo: ${no}`);
+      new Notice(`Mnemo Scribe: ${no}`);
       return;
     }
     const rate = billing?.rates.find((r) => r.operation === "record");
@@ -282,10 +295,10 @@ export default class MnemoPlugin extends Plugin {
     if (!api) return;
     try {
       const sent = await this.recordings.sendAll(api);
-      if (sent) new Notice(`Mnemo: ${sent === 1 ? "recording" : `${sent} recordings`} sent. The note arrives once it is transcribed.`);
+      if (sent) new Notice(`Mnemo Scribe: ${sent === 1 ? "recording" : `${sent} recordings`} sent. The note arrives once it is transcribed.`);
     } catch (err) {
-      if (err instanceof OutOfCredits) new Notice(`Mnemo: ${err.message} The recording is kept on this device.`);
-      else new Notice(`Mnemo: recording kept on this device, not sent yet — ${(err as Error).message}`);
+      if (err instanceof OutOfCredits) new Notice(`Mnemo Scribe: ${err.message} The recording is kept on this device.`);
+      else new Notice(`Mnemo Scribe: recording kept on this device, not sent yet — ${(err as Error).message}`);
     }
   }
 
@@ -297,14 +310,14 @@ export default class MnemoPlugin extends Plugin {
     const api = this.api();
     const engine = this.engineNow();
     if (!api || !engine) {
-      new Notice("Mnemo: paste your device token in settings first.");
+      new Notice("Mnemo Scribe: paste your device token in settings first.");
       return;
     }
     if (this.running) return;
 
     const files = await engine.unclaimed(within);
     if (files.length === 0) {
-      if (!within) new Notice("Mnemo: no new files in the synced folders.");
+      if (!within) new Notice("Mnemo Scribe: no new files in the synced folders.");
       return;
     }
 
@@ -313,7 +326,7 @@ export default class MnemoPlugin extends Plugin {
     try {
       quote = await engine.quoteImport(files);
     } catch (err) {
-      new Notice(`Mnemo: could not price the import — ${(err as Error).message}`);
+      new Notice(`Mnemo Scribe: could not price the import — ${(err as Error).message}`);
       return;
     }
     const cost = quote.credits;
@@ -323,7 +336,7 @@ export default class MnemoPlugin extends Plugin {
     const yes = await new Promise<boolean>((resolve) =>
       new AskModal(
         this.app,
-        `Import ${files.length} file${files.length === 1 ? "" : "s"} into Scribe?`,
+        `Import ${files.length} file${files.length === 1 ? "" : "s"} into Mnemo Scribe?`,
         no ? no : detail,
         no ? "OK" : `Import${costLabel(billing, cost)}`,
         "Not now",
@@ -338,14 +351,14 @@ export default class MnemoPlugin extends Plugin {
       const { imported, failed } = await engine.importFiles(files, quote.each);
       await this.save();
       new Notice(
-        `Mnemo: imported ${imported} file${imported === 1 ? "" : "s"}` +
+        `Mnemo Scribe: imported ${imported} file${imported === 1 ? "" : "s"}` +
           (failed.length ? `, ${failed.length} could not be read` : "")
       );
-      for (const failure of failed) console.error(`Mnemo: ${failure.file} — ${failure.error}`);
+      for (const failure of failed) console.error(`Mnemo Scribe: ${failure.file} — ${failure.error}`);
       this.setStatus(`${Object.keys(this.state.notes).length} notes`);
     } catch (err) {
       this.setStatus("offline");
-      new Notice(`Mnemo: ${(err as Error).message}`);
+      new Notice(`Mnemo Scribe: ${(err as Error).message}`);
     } finally {
       this.running = false;
     }
@@ -360,7 +373,7 @@ export default class MnemoPlugin extends Plugin {
     const api = this.api();
     const engine = this.engineNow();
     if (!api || !engine) {
-      new Notice("Mnemo: paste your device token in settings first.");
+      new Notice("Mnemo Scribe: paste your device token in settings first.");
       return;
     }
     new MnemoSearchModal(this.app, api, engine, () => this.save()).open();
@@ -404,7 +417,7 @@ export default class MnemoPlugin extends Plugin {
 
   private api(): ScribeApi | null {
     if (!this.settings.baseUrl || !this.settings.token) return null;
-    return new ScribeApi(this.settings.baseUrl, this.settings.token);
+    return new ScribeApi(this.settings.baseUrl, this.settings.token, obsidianHttp);
   }
 
   /** A changed address, token or state starts a fresh engine. */
@@ -413,8 +426,21 @@ export default class MnemoPlugin extends Plugin {
     this.billingCache = null;
   }
 
+  private statusText = "";
+
   private setStatus(text: string) {
-    this.status?.setText(`Mnemo: ${text}`);
+    this.statusText = text;
+    this.status?.setText(`Mnemo Scribe: ${text}`);
+    for (const leaf of this.app.workspace.getLeavesOfType(MNEMO_VIEW)) {
+      if (leaf.view instanceof MnemoSearchView) leaf.view.refreshStatus();
+    }
+  }
+
+  /** The panels start again: a new token or address changes everything they show. */
+  restartPanels() {
+    for (const leaf of this.app.workspace.getLeavesOfType(MNEMO_VIEW)) {
+      if (leaf.view instanceof MnemoSearchView) void leaf.view.restart();
+    }
   }
 
   /**
@@ -424,12 +450,12 @@ export default class MnemoPlugin extends Plugin {
   async run(what: "pull" | "push" | "both", loud = false) {
     const engine = this.engineNow();
     if (!engine) {
-      if (loud) new Notice("Mnemo: paste your device token in settings first.");
+      if (loud) new Notice("Mnemo Scribe: paste your device token in settings first.");
       return;
     }
     if (this.running) return;
     if (this.settings.synced.length === 0) {
-      if (loud) new Notice("Mnemo: choose which folders sync in Mnemo's settings first.");
+      if (loud) new Notice("Mnemo Scribe: choose which folders sync in Mnemo Scribe's settings first.");
       this.setStatus("no folders chosen");
       return;
     }
@@ -454,17 +480,17 @@ export default class MnemoPlugin extends Plugin {
         const moved = pulled || pushed.saved || pushed.conflicts || gone;
         new Notice(
           moved
-            ? `Mnemo: ${pulled} in, ${pushed.saved} out` +
+            ? `Mnemo Scribe: ${pulled} in, ${pushed.saved} out` +
                 (pushed.conflicts ? `, ${pushed.conflicts} conflicted` : "") +
-                (gone ? `, ${gone} deleted in Scribe moved to trash` : "")
-            : `Mnemo: up to date — ${held} note${held === 1 ? "" : "s"}`
+                (gone ? `, ${gone} deleted in Mnemo Scribe moved to trash` : "")
+            : `Mnemo Scribe: up to date — ${held} note${held === 1 ? "" : "s"}`
         );
       }
     } catch (err) {
       const message = (err as Error).message;
       this.setStatus("offline");
-      if (loud) new Notice(`Mnemo: ${message}`);
-      else console.error("Scribe sync failed:", message);
+      if (loud) new Notice(`Mnemo Scribe: ${message}`);
+      else console.error("Mnemo Scribe sync failed:", message);
     } finally {
       this.running = false;
     }
@@ -536,7 +562,7 @@ class MnemoSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("Device token")
-      .setDesc("From Scribe → Settings → Connect a device. Shown there only once.")
+      .setDesc("From Mnemo Scribe → Settings → Connect a device. Shown there only once.")
       .addText((text) => {
         text.inputEl.type = "password";
         text
@@ -546,6 +572,7 @@ class MnemoSettingTab extends PluginSettingTab {
             settings.token = value.trim();
             this.plugin.resetEngine();
             await this.plugin.save();
+            this.plugin.restartPanels();
           });
       });
 
@@ -628,16 +655,16 @@ class MnemoSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("Import new files")
-      .setDesc("Files in the synced folders that Scribe has never seen. Shows the cost before anything is sent.")
+      .setDesc("Files in the synced folders that Mnemo Scribe has never seen. Shows the cost before anything is sent.")
       .addButton((button) => button.setButtonText("Import").onClick(() => void this.plugin.importNew()));
 
     new Setting(containerEl)
       .setName("Start again")
-      .setDesc("Forget what this vault has agreed with Scribe. Files are matched again by their Scribe id; nothing moves.")
+      .setDesc("Forget what this vault has agreed with Mnemo Scribe. Files are matched again by their Mnemo Scribe id; nothing moves.")
       .addButton((button) =>
         button.setButtonText("Reset").onClick(async () => {
           await this.plugin.forgetState();
-          new Notice("Mnemo: next sync matches every file again.");
+          new Notice("Mnemo Scribe: next sync matches every file again.");
         })
       );
   }

@@ -22,7 +22,9 @@ jobs:
         with:
           node-version: 20
 
-      - run: npm ci
+      # Not `npm ci`: the app's packages are added to package.json on release
+      # (scripts/plugin-app.mjs), at the exact versions the app runs on.
+      - run: npm install --no-audit --no-fund
       - run: npx tsc --noEmit
       - run: npm run build
 

@@ -3,11 +3,23 @@
     "target": "ES2020",
     "module": "ESNext",
     "moduleResolution": "bundler",
-    "lib": ["DOM", "ES2020"],
+    "lib": ["DOM", "DOM.Iterable", "ES2022"],
+    "jsx": "react-jsx",
     "strict": true,
     "noEmit": true,
     "isolatedModules": true,
-    "skipLibCheck": true
+    "skipLibCheck": true,
+    "paths": {
+      "@/components/ui": ["./src/app/ui.tsx"],
+      "@/components/note-section": ["./src/app/note-section.tsx"],
+      "@/components/app-shell": ["./src/app/shell.tsx"],
+      "@/lib/http": ["./src/app/http.ts"],
+      "@/lib/busy": ["./src/app/busy.ts"],
+      "@/lib/note/open-note": ["./src/app/open-note.ts"],
+      "next/link": ["./src/app/link.tsx"],
+      "next/navigation": ["./src/app/navigation.ts"],
+      "@/*": ["../src/*", "./app/*"]
+    }
   },
-  "include": ["src/**/*.ts"]
+  "include": ["src/**/*.ts", "src/**/*.tsx"]
 }

@@ -41,11 +41,11 @@ Then open Mnemo's settings:
 
 ## The panel
 
-The brain icon opens it. On the open note, its folder, or the whole vault:
-**Next** (What next, with Elaborate under each heading), **Ask** (a written
-answer, each citation opens its note), **Details** (amounts, dates, people),
-**Related**, **Search** (words free; semantic search on a press), **Themes**,
-and **Clients** when you keep them.
+The brain icon opens it, with the same screens as Mnemo Scribe itself:
+**Brain** (what you want, from which notes, at what price; Elaborate under
+each heading), **Search** (words free; search by meaning and a written answer
+on a press), **This note** (its linked notes, key details and what next) and
+**Sync** (which folders sync, and import).
 
 Paid actions show their cost in credits on the button and are refused at
 zero, with a link to top up. Your balance sits at the top of the panel.

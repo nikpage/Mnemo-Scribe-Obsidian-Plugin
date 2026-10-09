@@ -230,10 +230,10 @@ export class SyncEngine {
     }
 
     if (placed.length === 1) {
-      new Notice(`Mnemo: filed "${placed[0].title}" in ${placed[0].folder} — move the file to change it.`, 8000);
+      new Notice(`Mnemo Scribe: filed "${placed[0].title}" in ${placed[0].folder} — move the file to change it.`, 8000);
     } else if (placed.length > 1) {
       const where = [...new Set(placed.map((p) => p.folder))].join(", ");
-      new Notice(`Mnemo: filed ${placed.length} new notes in ${where} — move a file to change it.`, 8000);
+      new Notice(`Mnemo Scribe: filed ${placed.length} new notes in ${where} — move a file to change it.`, 8000);
     }
 
     await this.refreshRelated(touched);
@@ -446,7 +446,7 @@ export class SyncEngine {
       if (!(file instanceof TFile)) continue;
 
       const markdown = await this.vault.read(file);
-      const what = pushOf(note, { path: file.path, hash: hashOf(markdown) });
+      const what = pushOf(note, { folder: parentOf(file.path), hash: hashOf(markdown) });
       if (!what) continue;
 
       changed.push({ id, rev: note.rev, markdown, ...what });
@@ -490,7 +490,7 @@ export class SyncEngine {
       await this.vault.create(conflictPath, localMarkdown);
     }
 
-    new Notice(`Mnemo: "${note.filename}" changed in both places. Your copy is beside it.`);
+    new Notice(`Mnemo Scribe: "${note.filename}" changed in both places. Your copy is beside it.`);
   }
 
   /** Every folder in the vault, for choosing what syncs. */

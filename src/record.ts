@@ -162,7 +162,7 @@ export class RecordModal extends Modal {
     try {
       this.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     } catch {
-      new Notice("Mnemo: the microphone is not available. Allow it for Obsidian and try again.");
+      new Notice("Mnemo Scribe: the microphone is not available. Allow it for Obsidian and try again.");
       this.stream = null;
       this.close();
       return;
@@ -228,7 +228,7 @@ export class RecordModal extends Modal {
     await Promise.all(this.saves);
 
     if (this.index === 0) {
-      new Notice("Mnemo: nothing was recorded.");
+      new Notice("Mnemo Scribe: nothing was recorded.");
       return;
     }
     const at = new Date(this.started);
@@ -239,7 +239,7 @@ export class RecordModal extends Modal {
       recorded_at: at.toISOString(),
       duration_seconds: seconds,
     });
-    new Notice("Mnemo: recording kept. Sending it to Scribe…");
+    new Notice("Mnemo Scribe: recording kept. Sending it to Mnemo Scribe…");
     this.afterStop();
   }
 }
