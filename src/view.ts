@@ -2,7 +2,7 @@
 
 import { Component, ItemView, MarkdownRenderer, Notice, TFile, WorkspaceLeaf, setIcon } from "obsidian";
 import { OutOfCredits, PriceChanged, type Quote, type ScribeApi, type SearchHit, type WhatNextScope } from "./api";
-import { type Billing, JOBS, type Job, costLabel, parentOf, refusal, spentLine, subjectTarget, tagKey } from "./rules";
+import { type Billing, JOBS, type Job, costLabel, parentOf, refusal, spentLine, subjectTarget, tagKey, topicOf, withTopic } from "./rules";
 import type { SyncEngine } from "./sync";
 
 export const MNEMO_VIEW = "mnemo-search";
@@ -201,13 +201,13 @@ export class MnemoSearchView extends ItemView {
 
   /**
    * Work on a topic, as the app's home screen offers it: a job, a topic
-   * (typed, or one of the day's three, which offer only the jobs their notes
-   * support), and a narrowing by tags and dates. The price is on the button.
+   * or several (typed comma-separated, or the day's three added in turn, which
+   * offer only the jobs all their notes support), and a narrowing by tags and dates. The price is on the button.
    */
   private async topic(api: ScribeApi) {
     const form = this.body.createDiv();
     const jobs = form.createDiv({ cls: "mnemo-row mnemo-scope" });
-    const input = form.createEl("input", { type: "text", cls: "mnemo-input", attr: { placeholder: "A topic, e.g. my kombucha batches", maxlength: "200" } });
+    const input = form.createEl("input", { type: "text", cls: "mnemo-input", attr: { placeholder: "Topics, e.g. my kombucha batches, sourdough", maxlength: "200" } });
     const picks = form.createDiv({ cls: "mnemo-row mnemo-scope" });
     const only = form.createEl("input", { type: "text", cls: "mnemo-input", attr: { placeholder: "Only notes tagged… (comma-separated)" } });
     const not = form.createEl("input", { type: "text", cls: "mnemo-input", attr: { placeholder: "Leave out notes tagged…" } });
@@ -260,8 +260,9 @@ export class MnemoSearchView extends ItemView {
     for (const pick of await api.suggestions().catch(() => [])) {
       const button = picks.createEl("button", { text: pick.label });
       button.onclick = () => {
-        input.value = pick.subject;
-        allowed = pick.jobs;
+        input.value = withTopic(input.value, pick.subject);
+        const both = allowed ? pick.jobs.filter((key) => allowed!.includes(key)) : pick.jobs;
+        allowed = both.length ? both : null;
         if (pick.jobs.length && !pick.jobs.includes(job)) job = pick.jobs[0] as Job;
         drawJobs();
         void price();
@@ -272,7 +273,7 @@ export class MnemoSearchView extends ItemView {
     let asked = "";
     const show = () => this.reading(api, area, "subject", asked);
     press.onclick = async () => {
-      const topic = input.value.trim();
+      const topic = topicOf(input.value);
       if (!topic) return;
       const no = refusal(await this.deps().billing().catch(() => null));
       if (no) return this.refused(area, no);

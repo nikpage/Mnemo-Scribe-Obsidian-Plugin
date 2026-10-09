@@ -196,6 +196,21 @@ export function tagSpelling(raw: string): string {
     .replace(/^-+|-+$/g, "");
 }
 
+/** The topics typed in the topic box, comma-separated, each once, in the order added. */
+export function topicsOf(typed: string): string[] {
+  return [...new Set(typed.split(",").map((x) => x.replace(/\s+/g, " ").trim()).filter(Boolean))];
+}
+
+/** The topic box with one more topic added after those already there. */
+export function withTopic(typed: string, topic: string): string {
+  return topicsOf(`${typed},${topic}`).join(", ");
+}
+
+/** Several topics read as one subject, joined as the app joins them (`readingOf()`). */
+export function topicOf(typed: string): string {
+  return topicsOf(typed).join(", ");
+}
+
 export type Narrow = { only?: string[]; not?: string[]; from?: string; to?: string };
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
