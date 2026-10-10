@@ -50,6 +50,8 @@ export function SearchPane() {
   const [range, setRange] = useState<Range>("any");
   const [language, setLanguage] = useState("");
   const [actionsOnly, setActionsOnly] = useState(false);
+  // Cold storage and Trash are searched only here, by words, never by the AI.
+  const [where, setWhere] = useState<"" | "cold" | "trash">("");
   const [answer, setAnswer] = useState<string | null>(null);
   const [declined, setDeclined] = useState(false);
   const [noCredits, setNoCredits] = useState(false);
@@ -68,9 +70,9 @@ export function SearchPane() {
   }, [asked]);
 
   useEffect(() => {
-    setFilters({ tags: tagFilters, from, language, actionsOnly });
+    setFilters({ tags: tagFilters, from, language, actionsOnly, ...(where ? { shelf: where } : {}) });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tagFilters.join(","), from, language, actionsOnly]);
+  }, [tagFilters.join(","), from, language, actionsOnly, where]);
 
   const trimmed = query.trim();
   // Asked for once typing pauses, not on every key.
@@ -83,7 +85,7 @@ export function SearchPane() {
     useApi<{ facts: FactHit[] }>(settled.length >= 3 ? `/api/notes/facts?q=${encodeURIComponent(settled)}` : null, {
       keepPreviousData: true,
     }).data?.facts ?? [];
-  const shownFacts = trimmed.length >= 3 ? facts : [];
+  const shownFacts = trimmed.length >= 3 && !where ? facts : [];
 
   // An answer's price, asked once a question is long enough to ask: it moves
   // with the store, never with the words typed.
@@ -102,7 +104,7 @@ export function SearchPane() {
   const tags = [...tagCounts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).slice(0, 30);
 
   const pinned = recordings
-    .filter((n) => n.pinned && n.status === "done" && !n.archived)
+    .filter((n) => n.pinned && n.status === "done")
     .sort((a, b) => (a.recorded_at < b.recorded_at ? 1 : -1))
     .map((n) => ({ id: n.id, path: n.path, label: noteName(n.path, n.label) }));
 
@@ -153,6 +155,11 @@ export function SearchPane() {
             <Chip on={actionsOnly} onClick={() => setActionsOnly(!actionsOnly)}>
               {t("filterActions")}
             </Chip>
+            <select value={where} onChange={(e) => setWhere(e.target.value as typeof where)} className={selectClass}>
+              <option value="">{t("shelfNormal")}</option>
+              <option value="cold">{t("shelfCold")}</option>
+              <option value="trash">{t("shelfTrash")}</option>
+            </select>
           </>
         )}
       </div>
@@ -229,19 +236,21 @@ export function SearchPane() {
           )}
 
           {/* The two paid ways further, after the free answer has been seen. */}
-          <div className="mt-4 flex flex-wrap gap-2">
-            <Button onClick={runFuzzy} disabled={fuzzying || fuzzy}>
-              {fuzzying ? t("fuzzying") : t("searchByMeaning")}
-            </Button>
-            {trimmed.length >= 3 && (
-              <Button onClick={ask} disabled={asking} title={askWhy}>
-                {asking ? t("asking") : t("askNotes")}
-                <Cost credits={price?.credits} why={askWhy} />
+          {!where && (
+            <div className="mt-4 flex flex-wrap gap-2">
+              <Button onClick={runFuzzy} disabled={fuzzying || fuzzy}>
+                {fuzzying ? t("fuzzying") : t("searchByMeaning")}
               </Button>
-            )}
-          </div>
+              {trimmed.length >= 3 && (
+                <Button onClick={ask} disabled={asking} title={askWhy}>
+                  {asking ? t("asking") : t("askNotes")}
+                  <Cost credits={price?.credits} why={askWhy} />
+                </Button>
+              )}
+            </div>
+          )}
           {/* The answer's price in words, where a phone can read it. */}
-          {trimmed.length >= 3 && <p className="mt-1 min-h-4 text-xs text-muted-foreground">{price?.credits ? askWhy : ""}</p>}
+          {trimmed.length >= 3 && !where && <p className="mt-1 min-h-4 text-xs text-muted-foreground">{price?.credits ? askWhy : ""}</p>}
         </>
       )}
     </div>

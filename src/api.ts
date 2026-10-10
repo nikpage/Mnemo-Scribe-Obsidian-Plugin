@@ -174,6 +174,9 @@ function answer<T>(res: HttpResponse): T {
   return res.json as T;
 }
 
+/** The note apps a plugin runs in, as the server names them. */
+export type NoteApp = "obsidian" | "joplin";
+
 export class ScribeApi {
   constructor(
     private baseUrl: string,
@@ -210,9 +213,10 @@ export class ScribeApi {
     return answer<T>(res);
   }
 
-  /** Everything that changed since the last pull. */
-  pull(since: string | null): Promise<PullResult> {
-    return this.call<PullResult>(`/api/sync${since ? `?since=${encodeURIComponent(since)}` : ""}`);
+  /** Everything that changed since the last pull, minus what this app's copies were removed from. */
+  pull(since: string | null, app: NoteApp): Promise<PullResult> {
+    const params = new URLSearchParams({ app, ...(since ? { since } : {}) });
+    return this.call<PullResult>(`/api/sync?${params}`);
   }
 
   /** One note, for a search result this vault has never held. */
@@ -281,22 +285,27 @@ export class ScribeApi {
     return result.results || [];
   }
 
-  /** Of the notes this vault holds, the ones Scribe no longer has. */
-  async gone(ids: string[]): Promise<string[]> {
+  /** Of the notes this app holds, the ones in Scribe's Trash, or removed from this app on any device. */
+  async gone(ids: string[], app: NoteApp): Promise<string[]> {
     const gone: string[] = [];
     for (let at = 0; at < ids.length; at += 1000) {
       const result = await this.call<{ gone: string[] }>("/api/sync/gone", {
         method: "POST",
-        body: { ids: ids.slice(at, at + 1000) },
+        body: { ids: ids.slice(at, at + 1000), app },
       });
       gone.push(...result.gone);
     }
     return gone;
   }
 
-  /** The same delete as the app's: the note, its audio and its transcript. */
+  /** The same delete as the app's: the note moves to Scribe's Trash, restorable there. */
   async deleteNote(id: string): Promise<void> {
     await this.call("/api/recordings", { method: "DELETE", body: { recordingId: id } });
+  }
+
+  /** This app's copy was removed and the note kept: no device of this app gets it again. */
+  async detach(id: string, app: NoteApp): Promise<void> {
+    await this.call("/api/sync/detach", { method: "POST", body: { id, app } });
   }
 
   billing(): Promise<BillingInfo> {

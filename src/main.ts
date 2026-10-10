@@ -14,11 +14,12 @@ import {
   normalizePath,
 } from "obsidian";
 import { type BillingInfo, OutOfCredits, ScribeApi } from "./api";
-import { SyncEngine } from "./sync";
+import { APP, SyncEngine } from "./sync";
 import {
   type SyncState,
   WHOLE_VAULT,
   afterDelete,
+  afterGone,
   costLabel,
   emptyState,
   parentOf,
@@ -239,8 +240,9 @@ export default class MnemoPlugin extends Plugin {
   }
 
   /**
-   * A synced file was deleted here. Scribe's copy goes only on a yes; a no
-   * keeps it there and stops it coming back to this vault.
+   * A synced file was deleted here. Scribe's copy moves to its Trash only on
+   * a yes; a no keeps it there and no Obsidian gets it again, on any device.
+   * Already removed elsewhere (another device, or Scribe's Trash): nothing asked.
    */
   private async deleted(path: string) {
     const engine = this.engineNow();
@@ -249,21 +251,29 @@ export default class MnemoPlugin extends Plugin {
     const id = Object.keys(this.state.notes).find((key) => this.state.notes[key].file === path);
     if (!id || !engine.owns(path)) return;
 
+    const api = this.api();
+    if (api && (await api.gone([id], APP).catch(() => [])).length) {
+      afterGone(this.state, id);
+      await this.save();
+      return;
+    }
+
     const title = path.split("/").pop()!.replace(/\.md$/, "");
     new AskModal(
       this.app,
-      `Also delete "${title}" from Mnemo Scribe?`,
-      "Yes deletes the note, its audio and its transcript in Mnemo Scribe. No keeps it there and stops syncing it to this vault.",
-      "Delete in Mnemo Scribe",
+      `"${title}" is gone from this vault. Also move it to Mnemo Scribe's Trash?`,
+      "Keep: Mnemo Scribe keeps the note and no Obsidian gets it again. Trash: it leaves Mnemo Scribe's lists, search and AI, and can be restored there.",
+      "Move to Trash",
       "Keep in Mnemo Scribe",
       async (yes) => {
         try {
-          if (yes) await this.api()?.deleteNote(id);
+          if (yes) await api?.deleteNote(id);
+          else await api?.detach(id, APP);
           afterDelete(this.state, id, yes);
         } catch (err) {
-          // Not deleted there: kept, and not written back here either.
+          // Not trashed there: kept, and not written back here either.
           afterDelete(this.state, id, false);
-          new Notice(`Mnemo Scribe: not deleted in Mnemo Scribe — ${(err as Error).message}`);
+          if (yes) new Notice(`Mnemo Scribe: not moved to Trash in Mnemo Scribe — ${(err as Error).message}`);
         }
         await this.save();
       }

@@ -16,7 +16,8 @@ export type ListNote = {
   tags: string[];
   status: string;
   pinned: boolean;
-  archived: boolean;
+  /** Where its owner put it (`lib/note/shelf.ts`); only `normal` is in the lists. */
+  shelf: string;
   recorded_at: string;
   subject_id: string | null;
 };

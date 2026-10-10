@@ -4,6 +4,7 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { findNotes } from "@/lib/note/find";
 import { api, useApi } from "@/lib/api";
+import { READ, type Shelf } from "@/lib/note/shelf";
 
 export type SearchResult = {
   note: {
@@ -22,6 +23,8 @@ export type Filters = {
   from?: string | null;
   language?: string;
   actionsOnly?: boolean;
+  /** Cold storage or Trash, searched only in their own view. None: the shelves search reads. */
+  shelf?: Extract<Shelf, "cold" | "trash">;
 };
 
 type Search = {
@@ -57,6 +60,7 @@ export function searchParams(query: string, f: Filters): URLSearchParams {
   if (f.from) params.set("from", f.from);
   if (f.language) params.set("language", f.language);
   if (f.actionsOnly) params.set("actions", "1");
+  if (f.shelf) params.set("shelf", f.shelf);
   return params;
 }
 
@@ -75,7 +79,8 @@ export function SearchProvider({
   notes,
   children,
 }: {
-  notes: Parameters<typeof findNotes>[0];
+  /** Every note, on every shelf: the filters say which shelf is searched. */
+  notes: (Parameters<typeof findNotes>[0][number] & { shelf?: string })[];
   children: React.ReactNode;
 }) {
   const [query, setQuery] = useState("");
@@ -97,10 +102,15 @@ export function SearchProvider({
   // Typing searches the notes the browser already holds. No request, no
   // waiting, nothing billed — the answer is ready in the same breath as the
   // keystroke. A store this size never needed a server to look through it.
-  const typed = useMemo(
-    () => (active ? (findNotes(notes, trimmed) as SearchResult[]) : null),
-    [notes, trimmed, active]
-  );
+  const shelf = filters.shelf;
+  const typed = useMemo(() => {
+    if (!active) return null;
+    const searched = notes.filter((n) => {
+      const on = (n.shelf ?? "normal") as Shelf;
+      return shelf ? on === shelf : READ.includes(on);
+    });
+    return findNotes(searched, trimmed) as SearchResult[];
+  }, [notes, trimmed, active, shelf]);
 
   // The server's word search, once typing pauses. Words only — no `fuzzy`, no
   // model, nothing billed — and the previous answer stays on screen while the

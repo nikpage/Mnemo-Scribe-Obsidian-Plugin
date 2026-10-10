@@ -1,7 +1,7 @@
 // [Smith]
 
 import { MetadataCache, Notice, TFile, TFolder, Vault, normalizePath } from "obsidian";
-import type { RemoteNote, ScribeApi } from "./api";
+import type { NoteApp, RemoteNote, ScribeApi } from "./api";
 import {
   type Placement,
   type SyncState,
@@ -14,6 +14,9 @@ import {
   pullAction,
   pushOf,
 } from "./rules";
+
+/** This app, as Scribe names it. */
+export const APP: NoteApp = "obsidian";
 
 /**
  * Keeping the vault and Scribe in step.
@@ -218,7 +221,7 @@ export class SyncEngine {
     const placed: { title: string; folder: string }[] = [];
 
     while (more) {
-      const result = await this.api.pull(this.state.cursor);
+      const result = await this.api.pull(this.state.cursor, APP);
       for (const note of result.notes) {
         if (await this.write(note, placed)) {
           written++;
@@ -241,23 +244,29 @@ export class SyncEngine {
   }
 
   /**
-   * Notes deleted in Scribe. Their files go to the vault's trash, never
-   * deleted outright, so a mistake there is recoverable here.
+   * Notes in Scribe's Trash, or removed from Obsidian on another device. Their
+   * files go to the vault's trash, never deleted outright, so a mistake there
+   * is recoverable here. Returns how many files went.
    */
   async removeGone(): Promise<number> {
     const ids = [...Object.keys(this.state.notes), ...this.state.detached];
     if (ids.length === 0) return 0;
-    const gone = await this.api.gone(ids);
+    const gone = await this.api.gone(ids, APP);
+    // Removed here while offline, or before Scribe kept the list itself: said now.
+    const told = new Set(gone);
+    for (const id of this.state.detached.filter((id) => !told.has(id))) await this.api.detach(id, APP).catch(() => {});
+    let trashed = 0;
     for (const id of gone) {
       const known = this.state.notes[id];
       const file = known ? this.vault.getAbstractFileByPath(known.file) : null;
       if (file instanceof TFile && known && this.owns(known.file)) {
         this.trashing.add(file.path);
         await this.vault.trash(file, false);
+        trashed++;
       }
       afterGone(this.state, id);
     }
-    return gone.length;
+    return trashed;
   }
 
   /**

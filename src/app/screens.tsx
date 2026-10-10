@@ -40,7 +40,10 @@ function Screens({ screen, host }: { screen: Screen; host: ScreenHost }) {
   const [problem, setProblem] = useState<string | null>(null);
   // A screen draws once, whole: nothing until the notes are here.
   if (!data) return null;
-  const notes = data.recordings;
+  // As in the app: the lists hold the notes in use; search sees every shelf
+  // and keeps to the one asked for.
+  const all = data.recordings;
+  const notes = all.filter((note) => (note.shelf ?? "normal") === "normal");
   const open = (id: string) => void host.open(id).then(setProblem);
   return (
     <ShellContext.Provider value={{ recordings: notes, open }}>
@@ -48,7 +51,7 @@ function Screens({ screen, host }: { screen: Screen; host: ScreenHost }) {
       {screen === "brain" ? (
         <BrainOf key={host.noteId ?? ""} notes={notes} centreId={host.noteId ?? undefined} />
       ) : screen === "search" ? (
-        <SearchProvider notes={notes}>
+        <SearchProvider notes={all}>
           <SearchPane />
         </SearchProvider>
       ) : (
