@@ -26,9 +26,11 @@ export interface TipRect { left: number; top: number; width: number; height: num
 export interface TipSize { width: number; height: number }
 
 /** Where the box goes: centred below the element, above it when there is no
- *  room below, always inside the viewport. With a mouse `pointer` it hangs
- *  clear of the cursor instead (below its arrow, above when there is no
- *  room), so the cursor never sits on the words. Pure, so it is tested. */
+ *  room below, always inside the viewport. With a mouse `pointer` it goes to
+ *  the side of the element instead (right, else left), level with the
+ *  pointer, so it covers neither the cursor nor the words under it; only an
+ *  element with no room at either side gets it hung below the cursor. Pure,
+ *  so it is tested. */
 export function placeTip(
   rect: TipRect,
   size: TipSize,
@@ -36,12 +38,21 @@ export function placeTip(
   gap = GAP,
   pointer?: { x: number; y: number }
 ): { left: number; top: number } {
-  const centre = pointer ? pointer.x : rect.left + rect.width / 2;
-  const left = Math.max(gap, Math.min(centre - size.width / 2, viewport.width - size.width - gap));
-  const below = pointer ? pointer.y + CURSOR : rect.top + rect.height + gap;
+  if (pointer) {
+    const level = Math.max(gap, Math.min(pointer.y - size.height / 2, viewport.height - size.height - gap));
+    const right = rect.left + rect.width + gap;
+    if (right + size.width <= viewport.width - gap) return { left: right, top: level };
+    const left = rect.left - size.width - gap;
+    if (left >= gap) return { left, top: level };
+    const x = Math.max(gap, Math.min(pointer.x - size.width / 2, viewport.width - size.width - gap));
+    const below = pointer.y + CURSOR;
+    if (below + size.height <= viewport.height - gap) return { left: x, top: below };
+    return { left: x, top: Math.max(gap, pointer.y - size.height - gap) };
+  }
+  const left = Math.max(gap, Math.min(rect.left + rect.width / 2 - size.width / 2, viewport.width - size.width - gap));
+  const below = rect.top + rect.height + gap;
   if (below + size.height <= viewport.height - gap) return { left, top: below };
-  const above = (pointer ? pointer.y : rect.top) - size.height - gap;
-  return { left, top: Math.max(gap, above) };
+  return { left, top: Math.max(gap, rect.top - size.height - gap) };
 }
 
 /** One tip from parts, the empty ones left out: a control's words, then its price line. */

@@ -4,7 +4,6 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { openQuestions } from "@/lib/note/tag-suggestions";
 import { openTodos, type Todo } from "@/lib/note/todos";
 import { READ } from "@/lib/note/shelf";
-import { keptSuggestions, type Suggestion } from "@/lib/note/what-next";
 
 /**
  * What the home screen shows, in one free read: how much is in the store, the
@@ -19,10 +18,8 @@ type Admin = SupabaseClient<any, any, any>;
 export type Home = {
   totals: { notes: number; words: number; week: number };
   todos: Todo[];
-  /** The newest What next reading, cut to its opening. */
-  reading: { id: string; target: string; excerpt: string; at: string } | null;
-  /** The topics Brain last suggested, each with the jobs its notes support. */
-  topics: Suggestion[];
+  /** The newest What next readings, each cut to its opening; the whole one is read on demand. */
+  readings: { id: string; scope: string; target: string; excerpt: string; at: string }[];
   /** This week's insights, newest report first. */
   insights: { week: string; headline: string; body: string }[];
   needs: { tags: number; report: boolean };
@@ -33,6 +30,7 @@ export type Home = {
 const WEEK = 7 * 24 * 60 * 60 * 1000;
 const EXCERPT = 320;
 const RECENT = 5;
+const READINGS = 6;
 
 /** A reading's opening, without its Markdown marks, cut at a word. */
 export function excerptOf(text: string, max = EXCERPT): string {
@@ -48,7 +46,7 @@ export function excerptOf(text: string, max = EXCERPT): string {
 
 export async function homeOf(admin: Admin, userId: string, now = Date.now()): Promise<Home> {
   const since = new Date(now - WEEK).toISOString();
-  const [totals, week, todos, readings, suggested, insights, questions, added] = await Promise.all([
+  const [totals, week, todos, readings, insights, questions, added] = await Promise.all([
     admin.rpc("note_totals", { uid: userId }),
     admin
       .from("recordings")
@@ -61,21 +59,13 @@ export async function homeOf(admin: Admin, userId: string, now = Date.now()): Pr
     openTodos(admin, userId),
     admin
       .from("what_next_readings")
-      .select("id, target, reading, created_at")
+      .select("id, scope, target, reading, created_at")
       .eq("user_id", userId)
       .eq("status", "done")
       .neq("scope", "suggest")
       .is("parent_id", null)
       .order("created_at", { ascending: false })
-      .limit(1),
-    admin
-      .from("what_next_readings")
-      .select("reading")
-      .eq("user_id", userId)
-      .eq("scope", "suggest")
-      .eq("status", "done")
-      .order("created_at", { ascending: false })
-      .limit(1),
+      .limit(READINGS),
     admin
       .from("note_insights")
       .select("week_start, headline, body")
@@ -96,7 +86,7 @@ export async function homeOf(admin: Admin, userId: string, now = Date.now()): Pr
   ]);
 
   const total = (Array.isArray(totals.data) ? totals.data[0] : totals.data) as { notes?: number; words?: number } | null;
-  const reading = ((readings.data || []) as { id: string; target: string; reading: string | null; created_at: string }[])[0];
+  const kept = (readings.data || []) as { id: string; scope: string; target: string; reading: string | null; created_at: string }[];
   const written = ((insights.data || []) as { week_start: string; headline: string; body: string }[]).map((i) => ({
     week: i.week_start,
     headline: i.headline,
@@ -108,8 +98,9 @@ export async function homeOf(admin: Admin, userId: string, now = Date.now()): Pr
   return {
     totals: { notes: Number(total?.notes ?? 0), words: Number(total?.words ?? 0), week: week.count ?? 0 },
     todos,
-    topics: keptSuggestions(((suggested.data || [])[0] as { reading?: string } | undefined)?.reading || "[]"),
-    reading: reading?.reading ? { id: reading.id, target: reading.target, excerpt: excerptOf(reading.reading), at: reading.created_at } : null,
+    readings: kept
+      .filter((r) => r.reading)
+      .map((r) => ({ id: r.id, scope: r.scope, target: r.target, excerpt: excerptOf(r.reading!), at: r.created_at })),
     insights: written.filter((i) => i.week === newest),
     needs: { tags: questions.length, report: Boolean(newest) && now - new Date(newest!).getTime() < WEEK },
     recent: ((added.data || []) as { id: string; path: string | null; label: string | null; recorded_at: string; summary: string | null }[]).map((n) => ({

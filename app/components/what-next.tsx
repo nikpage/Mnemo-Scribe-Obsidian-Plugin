@@ -169,6 +169,23 @@ function ReadingBody({ reading, label }: { reading: ReturnType<typeof useReading
   );
 }
 
+/** One earlier reading in full, read back free: each heading and its text, nothing to press. */
+export function ReadingText({ scope, target }: { scope: Scope; target: string }) {
+  const { data } = useApi<Answer>(`/api/notes/what-next?scope=${scope}&target=${encodeURIComponent(target)}`);
+  const text = data?.reading?.status === "done" ? data.reading.reading : null;
+  if (!text) return null;
+  return (
+    <div className="space-y-4">
+      {readingSections(text).map((section, i) => (
+        <section key={i}>
+          {section.heading && <h3 className="mb-1 text-sm font-semibold">{section.heading}</h3>}
+          {section.body && <Prose text={section.body} />}
+        </section>
+      ))}
+    </div>
+  );
+}
+
 /** The press, its price inside it, and in words under it so a phone sees why. */
 function PressButton({ label, tip, primary, disabled, onPress, quote, why }: { label: string; tip: string; primary: boolean; disabled: boolean; onPress: () => void; quote?: Quote; why?: string }) {
   return (

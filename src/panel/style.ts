@@ -121,14 +121,12 @@ const LAYOUT = String.raw`
 ${R} .mt-3 { margin-top: 12px; }
 ${R} .block { display: block; }
 ${R} .flex { display: flex; }
-${R} .grid { display: grid; }
 ${R} .flex-1 { flex: 1 1 0%; }
 ${R} .flex-wrap { flex-wrap: wrap; }
 ${R} .items-center { align-items: center; }
 ${R} .gap-1 { gap: 4px; }
 ${R} .gap-2 { gap: 8px; }
 ${R} .gap-3 { gap: 12px; }
-${R} .gap-5 { gap: 20px; }
 ${R} .space-y-0\.5 > * + * { margin-top: 2px; }
 ${R} .space-y-1 > * + * { margin-top: 4px; }
 ${R} .space-y-2 > * + * { margin-top: 8px; }
@@ -188,7 +186,7 @@ ${R} .text-primary { color: var(--s-accent); }
 `;
 
 /** Left undrawn on purpose: the app's wide-screen rules and page margins, which a side panel has no room for. */
-export const UNDRAWN = ["md:hidden", "md:p-6", "p-4", "max-w-2xl", "lg:grid-cols-2", "lg:gap-8"];
+export const UNDRAWN = ["md:hidden", "md:p-6", "p-4", "max-w-2xl"];
 
 export function addStyle(doc: Document = document) {
   if (doc.getElementById("scribe-panel-style")) return;

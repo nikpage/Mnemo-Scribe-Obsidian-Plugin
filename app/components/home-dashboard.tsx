@@ -6,11 +6,12 @@ import Link from "next/link";
 import { useLang } from "@/hooks/use-lang";
 import { send, useApi } from "@/lib/api";
 import { useNotes } from "@/components/app-shell";
-import { JOB_LABEL } from "@/components/what-next";
+import { JOB_LABEL, ReadingText } from "@/components/what-next";
 import { formatCount, formatDate } from "@/lib/format";
 import { noteHref, noteName } from "@/lib/note/filing";
 import { NoteRow } from "@/components/note-row";
 import { Button, Heading, List, Notice, selectClass } from "@/components/ui";
+import { EVERYTHING, subjectOf, type Scope } from "@/lib/note/what-next-target";
 import type { Home } from "@/lib/note/home";
 import type { Todo } from "@/lib/note/todos";
 
@@ -26,6 +27,7 @@ import type { Todo } from "@/lib/note/todos";
 export const OPEN_BRAIN = "scribe:open-brain";
 
 const SHOWN = 8;
+const READINGS_SHOWN = 2;
 const HIDE_KEY = "scribe-home-needs-hidden";
 
 type Ticked = { todo: Todo; result: string | null };
@@ -58,6 +60,8 @@ export function HomeDashboard({ links = true }: { links?: boolean }) {
   const { data } = useApi<Home>("/api/notes/home");
   const [ticked, setTicked] = useState<Record<string, Ticked>>({});
   const [showAll, setShowAll] = useState(false);
+  const [moreReadings, setMoreReadings] = useState(false);
+  const [opened, setOpened] = useState<string | null>(null);
   const [hidden, setHidden] = useState(hiddenBefore);
   const [problem, setProblem] = useState<string | null>(null);
 
@@ -120,187 +124,193 @@ export function HomeDashboard({ links = true }: { links?: boolean }) {
     </Link>
   );
 
+  const nameOf = (scope: string, target: string) => {
+    const of = scope === "subject" ? subjectOf(target) : null;
+    if (of) return `${t(JOB_LABEL[of.kind])}: ${of.subject === EVERYTHING ? t("brainEverything") : of.subject}`;
+    if (scope === "tags") return `${t("jobPicture")}: ${target.split(",").map((tag) => `#${tag}`).join(" ")}`;
+    return t("jobPicture");
+  };
+  const readings = moreReadings ? data.readings : data.readings.slice(0, READINGS_SHOWN);
+
   return (
     <div className="space-y-5">
-      <section className="flex flex-wrap gap-3">
-        {[
-          [t("homeNotes"), formatCount(data.totals.notes, lang), t("tipStatNotes")],
-          [t("homeWords"), formatCount(data.totals.words, lang), t("tipStatWords")],
-          [t("homeWeek"), formatCount(data.totals.week, lang), t("tipStatWeek")],
-          [t("homeOpenTodos"), formatCount(openCount + done.length, lang), t("tipStatTodos")],
-        ].map(([label, value, tip]) => (
-          <div key={label} data-tip={tip} className="min-w-0 flex-1">
-            <div className="text-xs text-muted-foreground">{label}</div>
-            <div className="text-lg font-semibold">{value}</div>
-          </div>
-        ))}
+      <List>
+        <li className="flex flex-wrap gap-3 px-4 py-3">
+          {[
+            [t("homeNotes"), formatCount(data.totals.notes, lang), t("tipStatNotes")],
+            [t("homeWords"), formatCount(data.totals.words, lang), t("tipStatWords")],
+            [t("homeWeek"), formatCount(data.totals.week, lang), t("tipStatWeek")],
+            [t("homeOpenTodos"), formatCount(openCount + done.length, lang), t("tipStatTodos")],
+          ].map(([label, value, tip]) => (
+            <div key={label} data-tip={tip} className="min-w-0 flex-1">
+              <div className="text-xs text-muted-foreground">{label}</div>
+              <div className="text-lg font-semibold">{value}</div>
+            </div>
+          ))}
+        </li>
+      </List>
+
+  <section>
+    {!waiting && hidden ? (
+      <p className="text-xs text-muted-foreground">
+        {t("homeNeedsHidden")}{" "}
+        <Button
+          variant="link"
+          tip={t("tipNeedsShow")}
+          onClick={() => {
+            remember(false);
+            setHidden(false);
+          }}
+        >
+          {t("homeNeedsShow")}
+        </Button>
+      </p>
+    ) : (
+      <>
+        <Heading>{t("homeNeeds")}</Heading>
+        <Notice tone={waiting ? "primary" : "info"} className="flex flex-wrap items-center gap-3">
+          {waiting ? (
+            <div className="space-y-1 text-sm">
+              {data.needs.tags > 0 &&
+                (links ? (
+                  <Link href="/tags" data-tip={t("tipTagQuestions")} className="block font-medium text-primary hover:underline">
+                    {t("homeTagQuestions", { n: data.needs.tags })} →
+                  </Link>
+                ) : (
+                  <p className="font-medium">{t("homeTagQuestions", { n: data.needs.tags })}</p>
+                ))}
+              {data.needs.report &&
+                (links ? (
+                  <Link href="/insights" data-tip={t("tipReportReady")} className="block font-medium text-primary hover:underline">
+                    {t("reportReady")} →
+                  </Link>
+                ) : (
+                  <p className="font-medium">{t("reportReady")}</p>
+                ))}
+            </div>
+          ) : (
+            <>
+              <span className="flex-1 text-sm text-muted-foreground">{t("homeNeedsNone")}</span>
+              <Button
+                variant="link"
+                tip={t("tipNeedsHide")}
+                onClick={() => {
+                  remember(true);
+                  setHidden(true);
+                }}
+              >
+                {t("homeNeedsHide")}
+              </Button>
+            </>
+          )}
+        </Notice>
+      </>
+    )}
+  </section>
+
+      <section>
+        <Heading>{t("homeTodos")}</Heading>
+        {problem && <p className="mb-2 text-sm text-destructive">{problem}</p>}
+        {done.length === 0 && listed.length === 0 ? (
+          <p className="text-sm text-muted-foreground">{t("homeTodosNone")}</p>
+        ) : (
+          <List>
+            {done.map((entry) => (
+              <li key={keyOf(entry.todo)} className="space-y-1 px-4 py-3">
+                <label className="flex items-center gap-2 text-sm">
+                  <input type="checkbox" checked onChange={() => untick(entry)} aria-label={t("homeTodoUndo")} data-tip={t("tipTodoUndo")} />
+                  <span className="min-w-0 flex-1">
+                    <span className="text-muted-foreground line-through">{entry.todo.text}</span> {titled(entry.todo)}
+                  </span>
+                </label>
+                <label className="flex items-center gap-2 pl-3 text-xs text-muted-foreground" data-tip={t("tipTodoResult")}>
+                  {t("homeTodoResult")}
+                  <select
+                    data-tip={t("tipTodoResult")}
+                    className={selectClass}
+                    value={entry.result ?? ""}
+                    onChange={(event) => lead(entry, event.target.value || null)}
+                  >
+                    <option value="">{t("homeTodoNoResult")}</option>
+                    {candidates
+                      .filter((n) => n.id !== entry.todo.noteId)
+                      .map((n) => (
+                        <option key={n.id} value={n.id}>
+                          {noteName(n.path || "", n.label)}
+                        </option>
+                      ))}
+                  </select>
+                </label>
+              </li>
+            ))}
+            {listed.map((todo) => (
+              <li key={keyOf(todo)} className="px-4 py-3">
+                <label className="flex items-center gap-2 text-sm">
+                  <input type="checkbox" checked={false} onChange={() => tick(todo)} aria-label={t("homeTodoDone")} data-tip={t("tipTodoTick")} />
+                  <span className="min-w-0 flex-1">
+                    {todo.text} {titled(todo)}
+                  </span>
+                </label>
+              </li>
+            ))}
+          </List>
+        )}
+        {!showAll && openCount > SHOWN && (
+          <Button variant="link" className="mt-2" tip={t("tipTodosMore")} onClick={() => setShowAll(true)}>
+            {t("homeTodosMore", { n: openCount - SHOWN })}
+          </Button>
+        )}
       </section>
 
-      <div className="grid gap-5 lg:grid-cols-2 lg:gap-8">
-        <div className="min-w-0 space-y-5">
-          <section>
-            {!waiting && hidden ? (
-              <p className="text-xs text-muted-foreground">
-                {t("homeNeedsHidden")}{" "}
-                <Button
-                  variant="link"
-                  tip={t("tipNeedsShow")}
-                  onClick={() => {
-                    remember(false);
-                    setHidden(false);
-                  }}
-                >
-                  {t("homeNeedsShow")}
-                </Button>
-              </p>
-            ) : (
-              <>
-                <Heading>{t("homeNeeds")}</Heading>
-                <Notice tone={waiting ? "primary" : "info"} className="flex flex-wrap items-center gap-3">
-                  {waiting ? (
-                    <div className="space-y-1 text-sm">
-                      {data.needs.tags > 0 &&
-                        (links ? (
-                          <Link href="/tags" data-tip={t("tipTagQuestions")} className="block font-medium text-primary hover:underline">
-                            {t("homeTagQuestions", { n: data.needs.tags })} →
-                          </Link>
-                        ) : (
-                          <p className="font-medium">{t("homeTagQuestions", { n: data.needs.tags })}</p>
-                        ))}
-                      {data.needs.report &&
-                        (links ? (
-                          <Link href="/insights" data-tip={t("tipReportReady")} className="block font-medium text-primary hover:underline">
-                            {t("reportReady")} →
-                          </Link>
-                        ) : (
-                          <p className="font-medium">{t("reportReady")}</p>
-                        ))}
-                    </div>
-                  ) : (
-                    <>
-                      <span className="flex-1 text-sm text-muted-foreground">{t("homeNeedsNone")}</span>
-                      <Button
-                        variant="link"
-                        tip={t("tipNeedsHide")}
-                        onClick={() => {
-                          remember(true);
-                          setHidden(true);
-                        }}
-                      >
-                        {t("homeNeedsHide")}
-                      </Button>
-                    </>
-                  )}
-                </Notice>
-              </>
-            )}
-          </section>
-
-          <section>
-            <Heading>{t("homeTodos")}</Heading>
-            {problem && <p className="mb-2 text-sm text-destructive">{problem}</p>}
-            {done.length === 0 && listed.length === 0 ? (
-              <p className="text-sm text-muted-foreground">{t("homeTodosNone")}</p>
-            ) : (
-              <ul className="space-y-1">
-                {done.map((entry) => (
-                  <li key={keyOf(entry.todo)} className="space-y-1 py-1">
-                    <label className="flex items-center gap-2 text-sm">
-                      <input type="checkbox" checked onChange={() => untick(entry)} aria-label={t("homeTodoUndo")} data-tip={t("tipTodoUndo")} />
-                      <span className="min-w-0 flex-1">
-                        <span className="text-muted-foreground line-through">{entry.todo.text}</span> {titled(entry.todo)}
-                      </span>
-                    </label>
-                    <label className="flex items-center gap-2 pl-3 text-xs text-muted-foreground" data-tip={t("tipTodoResult")}>
-                      {t("homeTodoResult")}
-                      <select
-                        data-tip={t("tipTodoResult")}
-                        className={selectClass}
-                        value={entry.result ?? ""}
-                        onChange={(event) => lead(entry, event.target.value || null)}
-                      >
-                        <option value="">{t("homeTodoNoResult")}</option>
-                        {candidates
-                          .filter((n) => n.id !== entry.todo.noteId)
-                          .map((n) => (
-                            <option key={n.id} value={n.id}>
-                              {noteName(n.path || "", n.label)}
-                            </option>
-                          ))}
-                      </select>
-                    </label>
+      <section>
+        <Heading>{t("homeBrain")}</Heading>
+        {data.readings.length === 0 ? (
+          <p className="text-sm text-muted-foreground">{t("homeBrainNone")}</p>
+        ) : (
+          <>
+            <List>
+              {readings.map((reading) => {
+                const isOpen = opened === reading.id;
+                return (
+                  <li key={reading.id} className="px-4 py-3">
+                    <span className="block font-medium">{nameOf(reading.scope, reading.target)}</span>
+                    <span className="text-xs text-muted-foreground">{formatDate(reading.at, lang)}</span>
+                    {isOpen ? (
+                      <div className="mt-2">
+                        <ReadingText scope={reading.scope as Scope} target={reading.target} />
+                      </div>
+                    ) : (
+                      <p className="mt-1 line-clamp-2 text-xs leading-4 text-muted-foreground">{reading.excerpt}</p>
+                    )}
+                    <Button variant="link" className="mt-1" tip={t(isOpen ? "tipReadingLess" : "tipReadingMore")} onClick={() => setOpened(isOpen ? null : reading.id)}>
+                      {t(isOpen ? "homeReadingLess" : "homeReadingMore")}
+                    </Button>
                   </li>
-                ))}
-                {listed.map((todo) => (
-                  <li key={keyOf(todo)} className="py-1">
-                    <label className="flex items-center gap-2 text-sm">
-                      <input type="checkbox" checked={false} onChange={() => tick(todo)} aria-label={t("homeTodoDone")} data-tip={t("tipTodoTick")} />
-                      <span className="min-w-0 flex-1">
-                        {todo.text} {titled(todo)}
-                      </span>
-                    </label>
-                  </li>
-                ))}
-              </ul>
-            )}
-            {!showAll && openCount > SHOWN && (
-              <Button variant="link" className="mt-2" tip={t("tipTodosMore")} onClick={() => setShowAll(true)}>
-                {t("homeTodosMore", { n: openCount - SHOWN })}
+                );
+              })}
+            </List>
+            {!moreReadings && data.readings.length > READINGS_SHOWN && (
+              <Button variant="link" className="mt-2" tip={t("tipReadingsMore")} onClick={() => setMoreReadings(true)}>
+                {t("homeTodosMore", { n: data.readings.length - READINGS_SHOWN })}
               </Button>
             )}
-          </section>
-        </div>
-        <div className="min-w-0 space-y-5">
-          <section>
-            <Heading>{t("homeBrain")}</Heading>
-            {data.reading || data.topics.length > 0 || data.insights.length > 0 ? (
-              <div className="space-y-2 text-sm">
-                <List>
-                  {data.reading && (
-                    <li className="px-4 py-3">
-                      <p>{data.reading.excerpt}</p>
-                    </li>
-                  )}
-                  {data.topics.map((topic) => (
-                    <li key={topic.subject} className="px-4 py-3">
-                      <span className="block font-medium">{topic.label}</span>
-                      {topic.jobs.length > 0 && (
-                        <span className="text-xs text-muted-foreground">{topic.jobs.map((job) => t(JOB_LABEL[job])).join(" · ")}</span>
-                      )}
-                      <p className="mt-1 text-xs leading-4 text-muted-foreground">{topic.subject}</p>
-                    </li>
-                  ))}
-                  {data.insights.map((insight) => (
-                    <li key={insight.headline} className="px-4 py-3">
-                      <span className="block text-xs text-muted-foreground">{t("homeInsights")}</span>
-                      <p className="mt-1">{insight.headline}</p>
-                    </li>
-                  ))}
-                </List>
-                <Button variant="link" tip={t("tipBrainOpen")} onClick={(event) => event.currentTarget.dispatchEvent(new CustomEvent(OPEN_BRAIN, { bubbles: true }))}>
-                  {t("homeBrainOpen")} →
-                </Button>
-              </div>
-            ) : (
-              <p className="text-sm text-muted-foreground">{t("homeBrainNone")}</p>
-            )}
-          </section>
+          </>
+        )}
+      </section>
 
-          <section>
-            <Heading>{t("homeAdditions")}</Heading>
-            <List>
-              {data.recent.map((note) => (
-                <NoteRow key={note.id} note={note} meta={formatDate(note.recordedAt, lang)} excerpt={note.summary} />
-              ))}
-            </List>
-            {links && (
-              <Link href="/recent" data-tip={t("tipHomeAllNotes")} className="mt-2 block text-sm text-muted-foreground hover:underline">
-                {t("homeAllNotes")} →
-              </Link>
-            )}
-          </section>
-        </div>
-      </div>
+      <section>
+        <Heading>{t("homeAdditions")}</Heading>
+        <List>
+          {data.recent.map((note) => (
+            <NoteRow key={note.id} note={note} meta={formatDate(note.recordedAt, lang)} excerpt={note.summary} />
+          ))}
+        </List>
+        {links && (
+          <Link href="/recent" data-tip={t("tipHomeAllNotes")} className="mt-2 block text-sm text-muted-foreground hover:underline">
+            {t("homeAllNotes")} →
+          </Link>
+        )}
+      </section>
     </div>
   );
 }
