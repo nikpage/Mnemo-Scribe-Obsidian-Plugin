@@ -3,14 +3,14 @@
 // [Guru]
 import { useState } from "react";
 import Link from "next/link";
+import { ChevronRight } from "lucide-react";
 import { useLang } from "@/hooks/use-lang";
 import { send, useApi } from "@/lib/api";
-import { useNotes } from "@/components/app-shell";
 import { JOB_LABEL, ReadingText } from "@/components/what-next";
 import { formatCount, formatDate } from "@/lib/format";
-import { noteHref, noteName } from "@/lib/note/filing";
 import { NoteRow } from "@/components/note-row";
-import { Button, Heading, List, Notice, selectClass } from "@/components/ui";
+import { NoteLink } from "@/components/note-link";
+import { Button, Heading, List, Notice } from "@/components/ui";
 import { EVERYTHING, subjectOf, type Scope } from "@/lib/note/what-next-target";
 import type { Home } from "@/lib/note/home";
 import type { Todo } from "@/lib/note/todos";
@@ -30,7 +30,7 @@ const SHOWN = 8;
 const READINGS_SHOWN = 2;
 const HIDE_KEY = "scribe-home-needs-hidden";
 
-type Ticked = { todo: Todo; result: string | null };
+type Ticked = { todo: Todo };
 const keyOf = (todo: Todo) => `${todo.noteId}\n${todo.text}`;
 
 function hiddenBefore(): boolean {
@@ -56,7 +56,6 @@ function remember(hidden: boolean) {
  */
 export function HomeDashboard({ links = true }: { links?: boolean }) {
   const { lang, t } = useLang();
-  const { recordings } = useNotes();
   const { data } = useApi<Home>("/api/notes/home");
   const [ticked, setTicked] = useState<Record<string, Ticked>>({});
   const [showAll, setShowAll] = useState(false);
@@ -68,8 +67,7 @@ export function HomeDashboard({ links = true }: { links?: boolean }) {
   // A screen draws once, whole.
   if (!data) return null;
 
-  const save = (todo: Todo, done: boolean, result: string | null) =>
-    send("/api/notes/todos", "PUT", { id: todo.noteId, text: todo.text, done, result });
+  const save = (todo: Todo, done: boolean) => send("/api/notes/todos", "PUT", { id: todo.noteId, text: todo.text, done });
   const set = (todo: Todo, next: Ticked | null) =>
     setTicked((all) => {
       const rest = { ...all };
@@ -80,8 +78,8 @@ export function HomeDashboard({ links = true }: { links?: boolean }) {
 
   const tick = (todo: Todo) => {
     setProblem(null);
-    set(todo, { todo, result: null });
-    save(todo, true, null).catch((error) => {
+    set(todo, { todo });
+    save(todo, true).catch((error) => {
       set(todo, null);
       failed(error);
     });
@@ -89,15 +87,7 @@ export function HomeDashboard({ links = true }: { links?: boolean }) {
   const untick = (entry: Ticked) => {
     setProblem(null);
     set(entry.todo, null);
-    save(entry.todo, false, null).catch((error) => {
-      set(entry.todo, entry);
-      failed(error);
-    });
-  };
-  const lead = (entry: Ticked, result: string | null) => {
-    setProblem(null);
-    set(entry.todo, { ...entry, result });
-    save(entry.todo, true, result).catch((error) => {
+    save(entry.todo, false).catch((error) => {
       set(entry.todo, entry);
       failed(error);
     });
@@ -109,19 +99,12 @@ export function HomeDashboard({ links = true }: { links?: boolean }) {
   const openCount = open.length;
 
   const waiting = data.needs.tags > 0 || data.needs.report;
-  const candidates = recordings
-    .filter((n) => n.status === "done")
-    .sort((a, b) => (a.recorded_at < b.recorded_at ? 1 : -1))
-    .slice(0, 40);
 
+  const noteOf = (todo: Todo) => ({ id: todo.noteId, path: todo.title.replace(/\.md$/i, "") });
   const titled = (todo: Todo) => (
-    <Link
-      href={noteHref(todo.title.replace(/\.md$/i, ""), todo.noteId)}
-      data-tip={t("tipTodoFrom")}
-      className="text-xs text-muted-foreground hover:underline"
-    >
+    <NoteLink note={noteOf(todo)} data-tip={t("tipTodoFrom")} className="text-xs text-muted-foreground hover:underline">
       {todo.title}
-    </Link>
+    </NoteLink>
   );
 
   const nameOf = (scope: string, target: string) => {
@@ -216,41 +199,31 @@ export function HomeDashboard({ links = true }: { links?: boolean }) {
         ) : (
           <List>
             {done.map((entry) => (
-              <li key={keyOf(entry.todo)} className="space-y-1 px-4 py-3">
+              <li key={keyOf(entry.todo)} className="px-4 py-3">
                 <label className="flex items-center gap-2 text-sm">
                   <input type="checkbox" checked onChange={() => untick(entry)} aria-label={t("homeTodoUndo")} data-tip={t("tipTodoUndo")} />
                   <span className="min-w-0 flex-1">
                     <span className="text-muted-foreground line-through">{entry.todo.text}</span> {titled(entry.todo)}
                   </span>
                 </label>
-                <label className="flex items-center gap-2 pl-3 text-xs text-muted-foreground" data-tip={t("tipTodoResult")}>
-                  {t("homeTodoResult")}
-                  <select
-                    data-tip={t("tipTodoResult")}
-                    className={selectClass}
-                    value={entry.result ?? ""}
-                    onChange={(event) => lead(entry, event.target.value || null)}
-                  >
-                    <option value="">{t("homeTodoNoResult")}</option>
-                    {candidates
-                      .filter((n) => n.id !== entry.todo.noteId)
-                      .map((n) => (
-                        <option key={n.id} value={n.id}>
-                          {noteName(n.path || "", n.label)}
-                        </option>
-                      ))}
-                  </select>
-                </label>
               </li>
             ))}
             {listed.map((todo) => (
-              <li key={keyOf(todo)} className="px-4 py-3">
-                <label className="flex items-center gap-2 text-sm">
-                  <input type="checkbox" checked={false} onChange={() => tick(todo)} aria-label={t("homeTodoDone")} data-tip={t("tipTodoTick")} />
-                  <span className="min-w-0 flex-1">
-                    {todo.text} {titled(todo)}
+              <li key={keyOf(todo)} className="flex items-start gap-3 px-4 py-3 hover:bg-muted/50">
+                <input type="checkbox" className="mt-1" checked={false} onChange={() => tick(todo)} aria-label={t("homeTodoDone")} data-tip={t("tipTodoTick")} />
+                {/* Drawn like a note: the words, the sentence they were said in, the note and its day. The tick is the box alone. */}
+                <NoteLink
+                  note={noteOf(todo)}
+                  hash={todo.source?.line != null ? `line-${todo.source.line}` : undefined}
+                  data-tip={t("tipTodoFrom")}
+                  className="min-w-0 flex-1"
+                >
+                  <span className="block font-medium">{todo.text}</span>
+                  {todo.source && <span className="mt-1 line-clamp-2 block text-xs leading-4 text-muted-foreground">{todo.source.text}</span>}
+                  <span className="mt-1 block truncate text-xs text-muted-foreground">
+                    {todo.title} · {formatDate(todo.recordedAt, lang)}
                   </span>
-                </label>
+                </NoteLink>
               </li>
             ))}
           </List>
@@ -271,20 +244,24 @@ export function HomeDashboard({ links = true }: { links?: boolean }) {
             <List>
               {readings.map((reading) => {
                 const isOpen = opened === reading.id;
+                // The row opens where it is, as every block on the note screen does.
                 return (
-                  <li key={reading.id} className="px-4 py-3">
-                    <span className="block font-medium">{nameOf(reading.scope, reading.target)}</span>
-                    <span className="text-xs text-muted-foreground">{formatDate(reading.at, lang)}</span>
-                    {isOpen ? (
-                      <div className="mt-2">
-                        <ReadingText scope={reading.scope as Scope} target={reading.target} />
-                      </div>
-                    ) : (
-                      <p className="mt-1 line-clamp-2 text-xs leading-4 text-muted-foreground">{reading.excerpt}</p>
-                    )}
-                    <Button variant="link" className="mt-1" tip={t(isOpen ? "tipReadingLess" : "tipReadingMore")} onClick={() => setOpened(isOpen ? null : reading.id)}>
-                      {t(isOpen ? "homeReadingLess" : "homeReadingMore")}
-                    </Button>
+                  <li key={reading.id}>
+                    <details open={isOpen} onToggle={(event) => setOpened(event.currentTarget.open ? reading.id : null)} className="group">
+                      <summary data-tip={t("tipReadingMore")} className="flex cursor-pointer list-none items-start gap-3 px-4 py-3 hover:bg-muted/50">
+                        <ChevronRight className="mt-1 h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform group-open:rotate-90" aria-hidden />
+                        <span className="min-w-0 flex-1">
+                          <span className="block font-medium">{nameOf(reading.scope, reading.target)}</span>
+                          <span className="text-xs text-muted-foreground">{formatDate(reading.at, lang)}</span>
+                          {!isOpen && <span className="mt-1 line-clamp-2 block text-xs leading-4 text-muted-foreground">{reading.excerpt}</span>}
+                        </span>
+                      </summary>
+                      {isOpen && (
+                        <div className="pb-3 pl-10 pr-4">
+                          <ReadingText scope={reading.scope as Scope} target={reading.target} />
+                        </div>
+                      )}
+                    </details>
                   </li>
                 );
               })}

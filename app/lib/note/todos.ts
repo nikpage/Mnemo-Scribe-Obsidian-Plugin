@@ -3,23 +3,33 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { noteName } from "@/lib/note/filing";
 import { READ } from "@/lib/note/shelf";
+import { sourceOf, type TodoSource } from "@/lib/note/todo-source";
 
 /**
  * To-dos are a note's action items. The items stay where the model wrote
  * them (`analysis.actionItems`); what is ticked off is `recordings.actions_done`,
- * one entry per item, keyed by its text. A to-do can name the note it led to,
- * which `buildNote()` writes beside the ticked line.
+ * one entry per item, keyed by its text.
  */
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Admin = SupabaseClient<any, any, any>;
 
-export type DoneItem = { text: string; at: string; result: string | null; title: string | null };
+export type DoneItem = { text: string; at: string };
 
-export type Todo = { noteId: string; title: string; text: string; recordedAt: string };
+export type Todo = {
+  noteId: string;
+  title: string;
+  text: string;
+  recordedAt: string;
+  /** The sentence it was said in; null when none can be found, or past the notes read for it. */
+  source: TodoSource | null;
+};
 
 /** How many notes back the open to-dos are looked for: newest first. */
 const NOTES = 150;
+
+/** How many notes have their text read to find where their to-dos were said: the newest. */
+const SOURCED = 12;
 
 /** An item's entry, if it is ticked off. */
 export const doneOf = (done: DoneItem[] | null | undefined, text: string): DoneItem | undefined =>
@@ -44,15 +54,31 @@ export async function openTodos(admin: Admin, userId: string): Promise<Todo[]> {
     items: string[] | null;
     actions_done: DoneItem[] | null;
   }[];
-  return rows.flatMap((row) =>
+  const todos = rows.flatMap((row) =>
     (Array.isArray(row.items) ? row.items : [])
       .filter((text) => !doneOf(row.actions_done, text))
-      .map((text) => ({ noteId: row.id, title: noteName(row.path || "", row.label || ""), text, recordedAt: row.recorded_at }))
+      .map((text) => ({ noteId: row.id, title: noteName(row.path || "", row.label || ""), text, recordedAt: row.recorded_at, source: null as TodoSource | null }))
   );
+
+  // The text of the newest notes that have something open, not of all 150.
+  const ids = [...new Set(todos.map((todo) => todo.noteId))].slice(0, SOURCED);
+  if (ids.length === 0) return todos;
+  const { data: texts } = await admin.from("recordings").select("id, transcript, body_md").eq("user_id", userId).in("id", ids);
+  const byId = new Map(
+    ((texts || []) as { id: string; transcript: { utterances?: { text?: string }[] } | null; body_md: string | null }[]).map((n) => [
+      n.id,
+      { utterances: (n.transcript?.utterances || []).map((u) => u.text || ""), body: n.body_md },
+    ])
+  );
+  for (const todo of todos) {
+    const note = byId.get(todo.noteId);
+    if (note) todo.source = sourceOf(todo.text, note);
+  }
+  return todos;
 }
 
 /**
- * Ticks an item off (with the note it led to, or none), or puts it back.
+ * Ticks an item off, or puts it back.
  * Only the caller's own notes are touched, and an item the note does not
  * have is refused rather than invented.
  */
@@ -61,9 +87,8 @@ export async function setDone(
   userId: string,
   noteId: string,
   text: string,
-  done: boolean,
-  result: string | null
-): Promise<"ok" | "note" | "item" | "result"> {
+  done: boolean
+): Promise<"ok" | "note" | "item"> {
   const { data: note } = await admin
     .from("recordings")
     .select("id, items:analysis->actionItems, actions_done")
@@ -74,16 +99,8 @@ export async function setDone(
   const items = Array.isArray(note.items) ? (note.items as string[]) : [];
   if (!items.includes(text)) return "item";
 
-  let title: string | null = null;
-  if (done && result) {
-    if (result === noteId) return "result";
-    const { data: target } = await admin.from("recordings").select("path, label").eq("user_id", userId).eq("id", result).maybeSingle();
-    if (!target) return "result";
-    title = noteName(target.path || "", target.label || "");
-  }
-
   const kept = ((note.actions_done as DoneItem[] | null) || []).filter((d) => d.text !== text);
-  const next = done ? [...kept, { text, at: new Date().toISOString(), result: done && result ? result : null, title }] : kept;
+  const next = done ? [...kept, { text, at: new Date().toISOString() }] : kept;
   // updated_at by hand, as every write here does: a note app pulls the ticked line.
   await admin
     .from("recordings")

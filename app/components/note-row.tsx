@@ -1,8 +1,7 @@
 // [Filer]
 
-import Link from "next/link";
-import { noteHref, noteName } from "@/lib/note/filing";
-import { preloadNote } from "@/lib/note/open-note";
+import { noteName } from "@/lib/note/filing";
+import { NoteLink } from "@/components/note-link";
 
 /**
  * One note in a list: its folders, its name, a line under it, and an
@@ -24,12 +23,7 @@ export function NoteRow({
   return (
     <li className="flex items-center gap-3 px-4 py-3 hover:bg-muted/50">
       {/* Pointing at a note starts reading it, so it opens whole on the click. */}
-      <Link
-        href={noteHref(note.path || "", note.id)}
-        onMouseEnter={() => preloadNote(note.id)}
-        onTouchStart={() => preloadNote(note.id)}
-        className="min-w-0 flex-1"
-      >
+      <NoteLink note={note} className="min-w-0 flex-1">
         <span className="block truncate font-medium">{noteName(note.path || "", note.label)}</span>
         {meta && <span className="text-xs text-muted-foreground">{meta}</span>}
         {/* Two lines tall whatever it holds, even before it arrives, so a
@@ -37,7 +31,7 @@ export function NoteRow({
         {excerpt !== undefined && excerpt !== null && (
           <p className="mt-1 line-clamp-2 h-8 text-xs leading-4 text-muted-foreground">{excerpt}</p>
         )}
-      </Link>
+      </NoteLink>
       {action}
     </li>
   );

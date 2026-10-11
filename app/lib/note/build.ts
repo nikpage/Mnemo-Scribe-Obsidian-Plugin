@@ -182,10 +182,8 @@ export function buildNote(source: NoteSource): NoteDocument {
   const actions = source.analysis?.actionItems ?? [];
   if (actions.length > 0) {
     const line = (a: string) => {
-      const done = source.actionsDone?.find((d) => d.text === a);
-      if (!done) return `- [ ] ${a}`;
-      // A link by the note's name, as a vault reads it; plain words elsewhere.
-      return done.title ? `- [x] ${a} → [[${done.title.replace(/\.md$/i, "")}]]` : `- [x] ${a}`;
+      const done = source.actionsDone?.some((d) => d.text === a);
+      return done ? `- [x] ${a}` : `- [ ] ${a}`;
     };
     sections.push(`## Action items\n\n${actions.map(line).join("\n")}`);
   }

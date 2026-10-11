@@ -124,6 +124,18 @@ ${R} .flex { display: flex; }
 ${R} .flex-1 { flex: 1 1 0%; }
 ${R} .flex-wrap { flex-wrap: wrap; }
 ${R} .items-center { align-items: center; }
+${R} .items-start { align-items: flex-start; }
+${R} .shrink-0 { flex-shrink: 0; }
+${R} .pb-3 { padding-bottom: 12px; }
+${R} .pl-10 { padding-left: 40px; }
+${R} .pr-4 { padding-right: 16px; }
+${R} .cursor-pointer { cursor: pointer; }
+${R} .list-none { list-style: none; }
+${R} .list-none::-webkit-details-marker { display: none; }
+${R} .h-3\.5 { height: 14px; }
+${R} .w-3\.5 { width: 14px; }
+${R} .transition-transform { transition: transform .15s; }
+${R} .group[open] > summary .group-open\:rotate-90 { transform: rotate(90deg); }
 ${R} .gap-1 { gap: 4px; }
 ${R} .gap-2 { gap: 8px; }
 ${R} .gap-3 { gap: 12px; }

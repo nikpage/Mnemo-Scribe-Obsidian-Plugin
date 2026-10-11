@@ -2,10 +2,9 @@
 
 // [utils]
 import { useSyncExternalStore } from "react";
-import Link from "next/link";
 import { useLang } from "@/hooks/use-lang";
 import { NO_RECENT_NOTES, type RecentNote, recentNotes } from "@/lib/note/recent";
-import { noteHref } from "@/lib/note/filing";
+import { NoteLink } from "@/components/note-link";
 import { Heading } from "@/components/ui";
 
 function List({ title, notes }: { title: string; notes: { id: string; path?: string; label: string }[] }) {
@@ -16,12 +15,9 @@ function List({ title, notes }: { title: string; notes: { id: string; path?: str
       <ul className="space-y-0.5 text-sm">
         {notes.map((note) => (
           <li key={note.id}>
-            <Link
-              href={noteHref(note.path ?? "", note.id)}
-              className="block rounded-lg px-2 py-1 hover:bg-muted"
-            >
+            <NoteLink note={note} className="block rounded-lg px-2 py-1 hover:bg-muted">
               <span className="block truncate">{note.label}</span>
-            </Link>
+            </NoteLink>
           </li>
         ))}
       </ul>
