@@ -101,7 +101,7 @@ export class Panel {
     this.tabs = el("div", root, { cls: "scribe-tabs", attrs: { role: "tablist" } });
     this.status = el("span", root, { cls: "scribe-status" });
     this.body = el("div", root);
-    // The home screen's "Read it in Brain".
+    // The home screen's "Open Your Brain".
     root.addEventListener(OPEN_BRAIN, () => void this.show("brain"));
   }
 

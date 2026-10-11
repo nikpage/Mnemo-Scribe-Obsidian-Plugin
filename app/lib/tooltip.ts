@@ -18,26 +18,30 @@ const PRESS_MS = 500;
 const TOUCH_SHOW_MS = 4000;
 const TOUCH_GHOST_MS = 1000;
 const GAP = 8;
+/** How far below the pointer's point the arrow or hand reaches. */
+const CURSOR = 24;
 const MAX_WIDTH = 280;
 
 export interface TipRect { left: number; top: number; width: number; height: number }
 export interface TipSize { width: number; height: number }
 
 /** Where the box goes: centred below the element, above it when there is no
- *  room below, always inside the viewport. Pure, so it is tested. */
+ *  room below, always inside the viewport. With a mouse `pointer` it hangs
+ *  clear of the cursor instead (below its arrow, above when there is no
+ *  room), so the cursor never sits on the words. Pure, so it is tested. */
 export function placeTip(
   rect: TipRect,
   size: TipSize,
   viewport: TipSize,
-  gap = GAP
+  gap = GAP,
+  pointer?: { x: number; y: number }
 ): { left: number; top: number } {
-  let left = rect.left + rect.width / 2 - size.width / 2;
-  left = Math.max(gap, Math.min(left, viewport.width - size.width - gap));
-  let top = rect.top + rect.height + gap;
-  if (top + size.height > viewport.height - gap) {
-    top = Math.max(gap, rect.top - size.height - gap);
-  }
-  return { left, top };
+  const centre = pointer ? pointer.x : rect.left + rect.width / 2;
+  const left = Math.max(gap, Math.min(centre - size.width / 2, viewport.width - size.width - gap));
+  const below = pointer ? pointer.y + CURSOR : rect.top + rect.height + gap;
+  if (below + size.height <= viewport.height - gap) return { left, top: below };
+  const above = (pointer ? pointer.y : rect.top) - size.height - gap;
+  return { left, top: Math.max(gap, above) };
 }
 
 /** One tip from parts, the empty ones left out: a control's words, then its price line. */
@@ -70,11 +74,12 @@ export function installTips(doc: Document = document): void {
   let hideTimer: number | undefined;
   let pressed = false;
   let lastTouch = 0;
+  let pointer: { x: number; y: number } | null = null;
 
   const target = (node: EventTarget | null): HTMLElement | null =>
     node instanceof win.Element ? ((node.closest(SELECTOR) as HTMLElement | null) ?? null) : null;
 
-  const show = (el: HTMLElement) => {
+  const show = (el: HTMLElement, at: { x: number; y: number } | null = null) => {
     const text = el.getAttribute("data-tip");
     if (!text) return;
     win.clearTimeout(hoverTimer);
@@ -84,13 +89,15 @@ export function installTips(doc: Document = document): void {
     current = el;
     el.setAttribute("aria-describedby", box.id);
     const r = el.getBoundingClientRect();
-    const at = placeTip(
+    const spot = placeTip(
       { left: r.left, top: r.top, width: r.width, height: r.height },
       { width: box.offsetWidth, height: box.offsetHeight },
-      { width: win.innerWidth, height: win.innerHeight }
+      { width: win.innerWidth, height: win.innerHeight },
+      GAP,
+      at ?? undefined
     );
-    box.style.left = `${at.left}px`;
-    box.style.top = `${at.top}px`;
+    box.style.left = `${spot.left}px`;
+    box.style.top = `${spot.top}px`;
     box.style.opacity = "1";
   };
 
@@ -108,7 +115,12 @@ export function installTips(doc: Document = document): void {
     const el = target(e.target);
     if (!el || el === current) return;
     hide();
-    hoverTimer = win.setTimeout(() => show(el), HOVER_MS);
+    pointer = { x: e.clientX, y: e.clientY };
+    hoverTimer = win.setTimeout(() => show(el, pointer), HOVER_MS);
+  });
+  // The mouse may move on during the pause; the box hangs where it ends up.
+  doc.addEventListener("mousemove", (e) => {
+    if (pointer) pointer = { x: e.clientX, y: e.clientY };
   });
   doc.addEventListener("mouseout", (e) => {
     const el = target(e.target);

@@ -23,7 +23,7 @@ type Suggestion = { label: string; subject: string; jobs: Kind[] };
 
 /** The jobs in the order they are offered, each named by what the person is about to do. */
 const JOBS: Kind[] = ["inspiration", "next-best", "study", "log"];
-const JOB_LABEL = { picture: "jobPicture", inspiration: "jobInspiration", "next-best": "jobNextBest", study: "jobStudy", log: "jobLog" } as const;
+export const JOB_LABEL = { picture: "jobPicture", inspiration: "jobInspiration", "next-best": "jobNextBest", study: "jobStudy", log: "jobLog" } as const;
 /** What each job hands back, in a line under its name: said from what its prompt asks for. */
 const JOB_WHAT = { picture: "jobPictureWhat", inspiration: "jobInspirationWhat", "next-best": "jobNextBestWhat", study: "jobStudyWhat", log: "jobLogWhat" } as const;
 
