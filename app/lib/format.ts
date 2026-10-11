@@ -95,3 +95,8 @@ export function formatUsd(amount: number, digits?: number): string {
 export function formatPrice(minor: number, currency: string, lang: Lang): string {
   return new Intl.NumberFormat(LOCALE[lang], { style: "currency", currency: currency.toUpperCase() }).format(minor / 100);
 }
+
+/** A whole number with the language's thousands marks: 12 480. */
+export function formatCount(n: number, lang: Lang): string {
+  return new Intl.NumberFormat(LOCALE[lang]).format(n);
+}

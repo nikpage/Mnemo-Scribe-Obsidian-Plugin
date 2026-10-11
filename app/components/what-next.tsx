@@ -9,6 +9,7 @@ import { formatDate, formatFactDate, formatUsd } from "@/lib/format";
 import { inlineMarks, readingSections } from "@/lib/note/reading-sections";
 import { EVERYTHING, type Kind, type Narrow, type Scope, dropTag, flipTag, monthsBefore, readingOf, subjectOf } from "@/lib/note/what-next-target";
 import { Plus } from "lucide-react";
+import { tipOf } from "@/lib/tooltip";
 import { Button, Chip, Cost, Input, Options, Pill } from "@/components/ui";
 import { NoteSection } from "@/components/note-section";
 
@@ -30,6 +31,7 @@ const JOB_WHAT = { picture: "jobPictureWhat", inspiration: "jobInspirationWhat",
 const WHENS = ["any", "month", "3m", "year", "pick"] as const;
 type When = (typeof WHENS)[number];
 const WHEN_LABEL = { any: "brainAnyTime", month: "brainLastMonth", "3m": "brainLast3", year: "brainLastYear", pick: "brainPickDates" } as const;
+const WHEN_TIP = { any: "tipWhenAny", month: "tipWhenMonth", "3m": "tipWhen3m", year: "tipWhenYear", pick: "tipWhenPick" } as const;
 const WHEN_MONTHS = { any: 0, month: 1, "3m": 3, year: 12, pick: 0 } as const;
 
 const quoteUrl = (scope: Scope, target: string, parentId?: string) =>
@@ -153,7 +155,7 @@ function ReadingBody({ reading, label }: { reading: ReturnType<typeof useReading
                   variant="link"
                   className="mt-1"
                   disabled={writing || price?.credits === null}
-                  title={why}
+                  tip={tipOf(t("tipElaborate"), why)}
                   onClick={() => press(`more:${section.heading}`, { target: done.target, parentId: done.id, part: section.heading! }, price?.credits, async () => (await elaborateQuote.mutate()) ?? undefined)}
                 >
                   {more?.status === "running" || pressed === `more:${section.heading}` ? t("whatNextReading") : t("whatNextElaborate")}
@@ -168,10 +170,10 @@ function ReadingBody({ reading, label }: { reading: ReturnType<typeof useReading
 }
 
 /** The press, its price inside it, and in words under it so a phone sees why. */
-function PressButton({ label, primary, disabled, onPress, quote, why }: { label: string; primary: boolean; disabled: boolean; onPress: () => void; quote?: Quote; why?: string }) {
+function PressButton({ label, tip, primary, disabled, onPress, quote, why }: { label: string; tip: string; primary: boolean; disabled: boolean; onPress: () => void; quote?: Quote; why?: string }) {
   return (
     <div>
-      <Button size="sm" variant={primary ? "primary" : "secondary"} onClick={onPress} disabled={disabled || quote?.credits === null} title={why}>
+      <Button size="sm" variant={primary ? "primary" : "secondary"} onClick={onPress} disabled={disabled || quote?.credits === null} tip={tipOf(tip, why)}>
         {label}
         <Cost credits={quote?.credits} why={why} />
       </Button>
@@ -200,6 +202,7 @@ export function WhatNext({ scope, target = "" }: { scope: "overview" | "tags" | 
       <ReadingBody reading={reading} />
       <PressButton
         label={busy ? t("whatNextReading") : reading.done ? t("whatNextAgain") : t("whatNextRead")}
+        tip={t(reading.done ? "tipWhatNextAgain" : scope === "item" ? "tipWhatNextItem" : scope === "tags" ? "tipWhatNextTags" : "tipWhatNextOverview")}
         primary={!reading.done}
         disabled={reading.writing}
         quote={price}
@@ -331,31 +334,31 @@ export function BrainReading({
         <h3 className="text-sm font-semibold">{t("brainWhich")}</h3>
         <div className="flex flex-wrap items-center gap-2">
           {centre && narrow.centre && (
-            <Pill onRemove={() => setNarrow({ ...narrow, centre: undefined })} removeLabel={t("brainRemove")}>
+            <Pill onRemove={() => setNarrow({ ...narrow, centre: undefined })} removeLabel={t("brainRemove")} tip={t("tipBrainCentre")} removeTip={t("tipBrainRemove")}>
               {t("brainCentre", { name: centre.title })}
             </Pill>
           )}
           {topics.map((topic) => (
-            <Pill key={topic} onRemove={() => setTopics(topics.filter((x) => x !== topic))} removeLabel={t("brainRemove")}>
+            <Pill key={topic} onRemove={() => setTopics(topics.filter((x) => x !== topic))} removeLabel={t("brainRemove")} tip={t("tipBrainTopic")} removeTip={t("tipBrainRemove")}>
               {t("brainAbout", { name: topic })}
             </Pill>
           ))}
           {[...narrow.only, ...narrow.not].map((tag) => (
-            <Pill key={tag} onClick={() => setNarrow(flipTag(narrow, tag))} onRemove={() => setNarrow(dropTag(narrow, tag))} removeLabel={t("brainRemove")}>
+            <Pill key={tag} onClick={() => setNarrow(flipTag(narrow, tag))} onRemove={() => setNarrow(dropTag(narrow, tag))} removeLabel={t("brainRemove")} tip={t("tipBrainFlip")} removeTip={t("tipBrainRemove")}>
               {t(narrow.only.includes(tag) ? "brainWith" : "brainWithout", { tag })}
             </Pill>
           ))}
           {topics.length === 0 && chosen.size === 0 && <span className="text-xs">{t("brainEverything")}</span>}
           {when === "any" ? (
-            <Chip on={open === "when"} aria-expanded={open === "when"} onClick={() => setOpen(open === "when" ? null : "when")}>
+            <Chip on={open === "when"} aria-expanded={open === "when"} tip={t("tipBrainWhenOpen")} onClick={() => setOpen(open === "when" ? null : "when")}>
               {whenLabel}
             </Chip>
           ) : (
-            <Pill onClick={() => setOpen(open === "when" ? null : "when")} onRemove={() => pickWhen("any")} removeLabel={t("brainRemove")}>
+            <Pill onClick={() => setOpen(open === "when" ? null : "when")} onRemove={() => pickWhen("any")} removeLabel={t("brainRemove")} tip={t("tipBrainWhen")} removeTip={t("tipWhenAny")}>
               {whenLabel}
             </Pill>
           )}
-          <Chip on={open === "add"} aria-expanded={open === "add"} onClick={() => setOpen(open === "add" ? null : "add")}>
+          <Chip on={open === "add"} aria-expanded={open === "add"} tip={t("tipBrainAdd")} onClick={() => setOpen(open === "add" ? null : "add")}>
             <Plus className="h-3 w-3" aria-hidden />
             {t("brainAdd")}
           </Chip>
@@ -365,7 +368,7 @@ export function BrainReading({
           <div className="space-y-2">
             <div className="flex flex-wrap gap-2">
               {WHENS.map((w) => (
-                <Chip key={w} on={w === when} onClick={() => pickWhen(w)}>
+                <Chip key={w} on={w === when} tip={t(WHEN_TIP[w])} onClick={() => pickWhen(w)}>
                   {t(WHEN_LABEL[w])}
                 </Chip>
               ))}
@@ -374,11 +377,11 @@ export function BrainReading({
               <div className="flex flex-wrap items-center gap-2 text-sm">
                 <label className="flex items-center gap-1">
                   {t("narrowFrom")}
-                  <Input type="date" value={narrow.from} onChange={(e) => setNarrow({ ...narrow, from: e.target.value })} className="w-auto" />
+                  <Input type="date" data-tip={t("tipFromDate")} value={narrow.from} onChange={(e) => setNarrow({ ...narrow, from: e.target.value })} className="w-auto" />
                 </label>
                 <label className="flex items-center gap-1">
                   {t("narrowTo")}
-                  <Input type="date" value={narrow.to} onChange={(e) => setNarrow({ ...narrow, to: e.target.value })} className="w-auto" />
+                  <Input type="date" data-tip={t("tipToDate")} value={narrow.to} onChange={(e) => setNarrow({ ...narrow, to: e.target.value })} className="w-auto" />
                 </label>
               </div>
             )}
@@ -389,6 +392,7 @@ export function BrainReading({
           <div className="space-y-2">
             <Input
               autoFocus
+              data-tip={t("tipBrainAddField")}
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               onKeyDown={(e) => {
@@ -399,14 +403,14 @@ export function BrainReading({
               maxLength={200}
             />
             <div className="flex max-h-40 flex-wrap gap-2 overflow-y-auto">
-              {query.trim() && <Chip onClick={() => about(query.replace(/\s+/g, " ").trim())}>{t("brainAboutTyped", { q: query.trim() })}</Chip>}
+              {query.trim() && <Chip tip={t("tipBrainTyped")} onClick={() => about(query.replace(/\s+/g, " ").trim())}>{t("brainAboutTyped", { q: query.trim() })}</Chip>}
               {offeredTopics.map((s) => (
-                <Chip key={s.label} onClick={() => about(s.subject)}>
+                <Chip key={s.label} tip={t("tipBrainSuggested")} onClick={() => about(s.subject)}>
                   {s.label}
                 </Chip>
               ))}
               {offeredTags.map((tag) => (
-                <Chip key={tag} onClick={() => addTag(tag)}>
+                <Chip key={tag} tip={t("tipBrainTagOffer")} onClick={() => addTag(tag)}>
                   #{tag}
                 </Chip>
               ))}
@@ -419,7 +423,7 @@ export function BrainReading({
         <Button
           variant="primary"
           disabled={reading.writing || !price || none}
-          title={why}
+          tip={tipOf(t("tipBrainRead"), why)}
           onClick={() => {
             setAsked(wanted);
             void reading.press("read", wanted, price?.credits, async () => (await quote.mutate()) ?? undefined);
@@ -441,7 +445,7 @@ export function BrainReading({
           <ul className="space-y-1">
             {earlier!.readings.map((r) => (
               <li key={r.id}>
-                <Button variant="link" size="sm" className="text-left" onClick={() => setAsked({ scope: r.scope, target: r.target })}>
+                <Button variant="link" size="sm" className="text-left" tip={t("tipBrainEarlier")} onClick={() => setAsked({ scope: r.scope, target: r.target })}>
                   {labelOf(r.scope, r.target)} · {formatDate(r.created_at, lang)}
                 </Button>
               </li>

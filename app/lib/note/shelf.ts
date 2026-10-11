@@ -27,3 +27,11 @@ export const SHELF_NAME = {
   cold: "shelfCold",
   trash: "shelfTrash",
 } as const satisfies Record<Shelf, string>;
+
+/** What opening each shelf shows and what the AI does with it. */
+export const SHELF_TIP = {
+  normal: "tipShelfNormal",
+  archived: "tipShelfArchived",
+  cold: "tipShelfCold",
+  trash: "tipShelfTrash",
+} as const satisfies Record<Shelf, string>;

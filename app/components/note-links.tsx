@@ -2,8 +2,12 @@
 
 // [Guru]
 import Link from "next/link";
-import { useApi } from "@/lib/api";
+import { useState } from "react";
+import { answered, send, useApi } from "@/lib/api";
+import { busyUntilDone } from "@/lib/busy";
+import { formatDate } from "@/lib/format";
 import { useLang } from "@/hooks/use-lang";
+import { Button } from "@/components/ui";
 import type { TranslationKey } from "@/lib/i18n";
 import { NoteSection } from "@/components/note-section";
 
@@ -31,37 +35,73 @@ const PHRASE: Record<string, { to: TranslationKey; from: TranslationKey }> = {
   continues: { to: "linkContinues", from: "linkContinuedBy" },
 };
 
+/**
+ * Related: always shown once answered, so a note with no links says whether
+ * it was never looked at or looked at and found nothing, and offers to look
+ * again — against every note, earlier and later.
+ */
 export function NoteLinks({ recordingId }: { recordingId: string }) {
-  const { t } = useLang();
-  const links = useApi<{ links: NoteLink[] }>(`/api/notes/links?id=${recordingId}`).data?.links ?? [];
+  const { t, lang } = useLang();
+  const res = useApi<{ links: NoteLink[]; lookedAt?: string | null }>(`/api/notes/links?id=${recordingId}`);
+  const [looking, setLooking] = useState(false);
+  const [failed, setFailed] = useState(false);
+
+  if (!answered(res)) return null;
+  const links = res.data?.links ?? [];
+  const lookedAt = res.data?.lookedAt ?? null;
 
   // A link the user rejected is kept in the database so the question is not
   // asked twice, but it is not a relation any more and is not shown.
   const shown = links.filter((l) => l.confirmed !== false);
-  if (shown.length === 0) return null;
+
+  async function lookAgain() {
+    const done = busyUntilDone();
+    setLooking(true);
+    setFailed(false);
+    try {
+      await send("/api/notes/links", "POST", { id: recordingId });
+      await res.mutate();
+    } catch {
+      setFailed(true);
+    } finally {
+      setLooking(false);
+      done();
+    }
+  }
 
   return (
     <NoteSection title={t("connected")} hint={t("connectedHint")} defaultOpen>
-      <ul className="space-y-2">
-        {shown.map((link) => (
-          <li key={link.id} className="text-sm">
-            <span className="text-muted-foreground">
-              {t(PHRASE[link.type][link.direction])}{" "}
-            </span>
-            <Link href={`/transcript/${link.note.id}`} className="text-primary hover:underline">
-              {link.note.title}
-            </Link>
-            {link.reason && (
-              <p className="text-xs text-muted-foreground">
-                {link.reason}
-                {/* An unconfirmed link says so. Nothing here is asserted as
-                    settled just because a model was willing to say it. */}
-                {link.confirmed === null && link.confidence < 0.8 && ` · ${t("linkUnsure")}`}
-              </p>
-            )}
-          </li>
-        ))}
-      </ul>
+      {shown.length === 0 ? (
+        <p className="text-sm text-muted-foreground">{t("linksNone")}</p>
+      ) : (
+        <ul className="space-y-2">
+          {shown.map((link) => (
+            <li key={link.id} className="text-sm">
+              <span className="text-muted-foreground">
+                {t(PHRASE[link.type][link.direction])}{" "}
+              </span>
+              <Link href={`/transcript/${link.note.id}`} className="text-primary hover:underline">
+                {link.note.title}
+              </Link>
+              {link.reason && (
+                <p className="text-xs text-muted-foreground">
+                  {link.reason}
+                  {/* An unconfirmed link says so. Nothing here is asserted as
+                      settled just because a model was willing to say it. */}
+                  {link.confirmed === null && link.confidence < 0.8 && ` · ${t("linkUnsure")}`}
+                </p>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+      <p className="mt-3 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+        <span>{lookedAt ? t("linksLooked", { date: formatDate(lookedAt, lang) }) : t("linksNotLooked")}</span>
+        <Button variant="link" className="text-xs" tip={t("tipLinksLookAgain")} disabled={looking} onClick={lookAgain}>
+          {looking ? t("linksLooking") : t("linksLookAgain")}
+        </Button>
+        {failed && <span>{t("linksLookFailed")}</span>}
+      </p>
     </NoteSection>
   );
 }

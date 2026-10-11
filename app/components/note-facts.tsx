@@ -6,6 +6,7 @@ import { useApi } from "@/lib/api";
 import { useLang } from "@/hooks/use-lang";
 import { NoteSection } from "@/components/note-section";
 import { Chip } from "@/components/ui";
+import { tipOf } from "@/lib/tooltip";
 import { factMeta } from "@/lib/note/fact-line";
 import { formatDate, formatFactDate } from "@/lib/format";
 
@@ -48,7 +49,7 @@ export function NoteFacts({ recordingId }: { recordingId: string }) {
             onClick={() => setOpen(open === fact.id ? null : fact.id)}
             // A fact the extraction was unsure of looks unsure.
             className={fact.confidence < 0.5 ? "border-dashed" : "text-foreground"}
-            title={fact.quote}
+            tip={tipOf(`“${fact.quote}”`, t("tipFactOpen"))}
           >
             <span className="font-medium">{fact.subject}</span>
             <span className="text-muted-foreground">

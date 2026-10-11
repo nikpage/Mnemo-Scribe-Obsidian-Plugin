@@ -105,6 +105,7 @@ export const RESERVED_LEVELS = new Set([
   "transcript",
   "subject",
   "subjects",
+  "tags",
   "insights",
   "integrations",
   "setup",
@@ -153,6 +154,23 @@ export function folderTags(folder: string): string[] {
   return normalizeTags(splitPath(folder).filter((level) => !DATED.test(level)));
 }
 
+/**
+ * Tags as a vault writes them, nested: `food/recipe` is the tag `recipe`
+ * under `food`. The note carries only the last word; each slash is a parent
+ * the person set, as `[child, parent]`.
+ */
+export function nestedTags(raw: string[]): { tags: string[]; parents: [string, string][] } {
+  const tags: string[] = [];
+  const parents: [string, string][] = [];
+  for (const written of raw) {
+    const levels = splitPath(written);
+    if (levels.length === 0) continue;
+    tags.push(levels[levels.length - 1]);
+    for (let i = 1; i < levels.length; i++) parents.push([levels[i], levels[i - 1]]);
+  }
+  return { tags: normalizeTags(tags), parents };
+}
+
 /** Enough to see that "recipe" and "recipes" are the same word. */
 export function singular(segment: string): string {
   return segment.replace(/s$/, "");
@@ -181,4 +199,16 @@ export function noteAtPath<T extends { path: string | null; status: string }>(ra
   const here = normalizePath([...raw.slice(0, -1), raw[raw.length - 1].replace(/\.md$/i, "")].join("/"));
   if (!here) return undefined;
   return notes.find((n) => n.status === "done" && (normalizePath(n.path || "") === here || n.path === splitPath(here).at(-1)));
+}
+
+/**
+ * A note's sentences after the person changed its tags: a tag kept keeps its
+ * sentence (or none, on a note filed before sentences), a tag added is the
+ * person's — "" — and is never offered for removal.
+ */
+export function keptWhy(had: string[] | null, why: Record<string, string> | null, tags: string[]): Record<string, string> {
+  const before = new Set(had || []);
+  return Object.fromEntries(
+    tags.flatMap((tag): [string, string][] => (!before.has(tag) ? [[tag, ""]] : why?.[tag] !== undefined ? [[tag, why[tag]]] : []))
+  );
 }

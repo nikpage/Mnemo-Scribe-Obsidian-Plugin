@@ -64,4 +64,6 @@ npm run build
 ```
 
 Pushing a tag equal to the version in `manifest.json` releases `main.js`,
-`manifest.json` and `styles.css` (`.github/workflows/release.yml`).
+`manifest.json` and `styles.css` (`.github/workflows/release.yml`). In the
+app's repo, every push to main that changes this folder or `src/` makes that
+tag by itself.

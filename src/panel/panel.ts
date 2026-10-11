@@ -7,6 +7,8 @@ import type { Billing } from "../rules";
 import type { Host, Shown } from "./host";
 import { type Key, type Lang, type Vars, t as say } from "./strings";
 import { addStyle } from "./style";
+import { installTips, tipOf } from "@/lib/tooltip";
+import { OPEN_BRAIN } from "@/components/home-dashboard";
 
 /**
  * Scribe beside the notes, the same in every app that holds them. Brain,
@@ -19,9 +21,10 @@ import { addStyle } from "./style";
  * app's never-pay-twice rules hold.
  */
 
-const TABS = ["brain", "search", "note", "sync"] as const;
+const TABS = ["home", "brain", "search", "note", "sync"] as const;
 type Tab = (typeof TABS)[number];
-const TAB_LABEL: Record<Tab, Key> = { brain: "brainTitle", search: "tabSearch", note: "tabNote", sync: "tabSync" };
+const TAB_TIP: Record<Tab, Key> = { home: "tipTabHome", brain: "tipBrain", search: "tipTabSearch", note: "tipTabNote", sync: "tipTabSync" };
+const TAB_LABEL: Record<Tab, Key> = { home: "tabHome", brain: "brainTitle", search: "tabSearch", note: "tabNote", sync: "tabSync" };
 
 type Rates = Billing & { rates: { operation: string; credits: number | string; per: number | string }[] };
 
@@ -63,7 +66,7 @@ function coin(into: HTMLElement) {
 }
 
 export class Panel {
-  private tab: Tab = "brain";
+  private tab: Tab = "home";
   private shown: Shown | null = null;
   private billingAt = 0;
   private billingCache: Rates | null = null;
@@ -83,16 +86,23 @@ export class Panel {
     private lang: Lang
   ) {
     addStyle(root.ownerDocument);
+    installTips(root.ownerDocument);
     root.replaceChildren();
     root.classList.add("scribe-panel");
+    // One line at any width: name, credits, Record. A narrow panel drops
+    // "Mnemo"; the sync line sits under the tabs, where it has the width.
     this.head = el("div", root, { cls: "scribe-head" });
-    el("strong", this.head, { cls: "scribe-name", text: "Mnemo Scribe" });
+    const name = el("strong", this.head, { cls: "scribe-name" });
+    el("span", name, { cls: "scribe-long", text: "Mnemo " });
+    name.append("Scribe");
     this.balance = el("span", this.head, { cls: "scribe-balance" });
-    this.recordButton = el("button", this.head, { cls: "scribe-btn is-record", text: `● ${this.t("record")}` });
+    this.recordButton = el("button", this.head, { cls: "scribe-btn is-record", text: `● ${this.t("record")}`, attrs: { "data-tip": this.t("tipPanelRecord") } });
     this.recordButton.onclick = () => this.host.record(this.recordButton);
-    this.status = el("span", this.head, { cls: "scribe-status" });
     this.tabs = el("div", root, { cls: "scribe-tabs", attrs: { role: "tablist" } });
+    this.status = el("span", root, { cls: "scribe-status" });
     this.body = el("div", root);
+    // The home screen's "Read it in Brain".
+    root.addEventListener(OPEN_BRAIN, () => void this.show("brain"));
   }
 
   private t(key: Key, vars?: Vars) {
@@ -122,10 +132,11 @@ export class Panel {
     const status = this.host.status();
     this.status.replaceChildren();
     if (status.choose) {
-      const go = el("button", this.status, { text: this.t("chooseToSync") });
+      const go = el("button", this.status, { text: this.t("chooseToSync"), attrs: { "data-tip": this.t("tipChooseToSync") } });
       go.onclick = () => void this.show("sync");
     } else {
       this.status.textContent = status.text;
+      this.status.setAttribute("data-tip", tipOf(status.text, this.t("tipPanelStatus")));
     }
   }
 
@@ -144,14 +155,14 @@ export class Panel {
     if (!billing?.paysInCredits) return;
     coin(this.balance);
     this.balance.append(String(billing.credits));
-    this.balance.title = this.t("brainBalance", { n: billing.credits });
+    this.balance.setAttribute("data-tip", tipOf(this.t("brainBalance", { n: billing.credits }), this.t("tipPanelBalance")));
     if (billing.credits <= 0) this.topUp(this.balance);
   }
 
   private topUp(into: HTMLElement) {
     const api = this.host.api();
     if (!api) return;
-    const link = el("button", into, { cls: "scribe-link", text: this.t("topUp") });
+    const link = el("button", into, { cls: "scribe-link", text: this.t("topUp"), attrs: { "data-tip": this.t("tipTopUp") } });
     link.onclick = () => this.host.link(api.topUpUrl);
   }
 
@@ -166,7 +177,7 @@ export class Panel {
   private drawTabs() {
     this.tabs.replaceChildren();
     for (const tab of TABS) {
-      const button = el("button", this.tabs, { text: this.t(TAB_LABEL[tab]), attrs: { role: "tab", "aria-selected": String(tab === this.tab) } });
+      const button = el("button", this.tabs, { text: this.t(TAB_LABEL[tab]), attrs: { role: "tab", "aria-selected": String(tab === this.tab), "data-tip": this.t(TAB_TIP[tab]) } });
       button.onclick = () => void this.show(tab);
     }
   }
@@ -208,9 +219,9 @@ export class Panel {
     this.balance.replaceChildren();
     const section = el("div", into, { cls: "scribe-section" });
     this.muted(this.t("connectHint"), section);
-    const input = el("input", section, { cls: "scribe-input", attrs: { type: "password", placeholder: "scribe_…" } });
+    const input = el("input", section, { cls: "scribe-input", attrs: { type: "password", placeholder: "scribe_…", "data-tip": this.t("tipConnectKey") } });
     const row = el("div", section, { cls: "scribe-row" });
-    const button = el("button", row, { cls: "scribe-btn is-primary", text: this.t("connect") });
+    const button = el("button", row, { cls: "scribe-btn is-primary", text: this.t("connect"), attrs: { "data-tip": this.t("tipConnect") } });
     button.onclick = async () => {
       if (!input.value.trim()) return;
       button.disabled = true;
@@ -224,14 +235,14 @@ export class Panel {
   /** Which folders or notebooks sync, and the presses that run it now. */
   private async sync(into: HTMLElement) {
     const row = el("div", into, { cls: "scribe-row" });
-    const now = el("button", row, { cls: "scribe-btn is-primary", text: this.t("syncNow") });
+    const now = el("button", row, { cls: "scribe-btn is-primary", text: this.t("syncNow"), attrs: { "data-tip": this.t("tipSyncNow") } });
     now.onclick = async () => {
       now.disabled = true;
       await this.host.syncNow();
       this.showStatus();
       now.disabled = false;
     };
-    const more = el("button", row, { cls: "scribe-btn", text: this.t("importNew") });
+    const more = el("button", row, { cls: "scribe-btn", text: this.t("importNew"), attrs: { "data-tip": this.t("tipImportNew") } });
     more.onclick = () => void this.host.importNew();
 
     const section = el("div", into, { cls: "scribe-section" });
@@ -241,9 +252,9 @@ export class Panel {
     const { all, synced } = await this.host.syncPlaces();
     const rows = [{ id: "/", path: this.t(this.host.places === "folders" ? "wholeVault" : "allNotebooks") }, ...all];
     for (const place of rows) {
-      const label = el("label", section, { cls: "scribe-tick" });
+      const label = el("label", section, { cls: "scribe-tick", attrs: { "data-tip": this.t("tipPlace") } });
       label.style.paddingLeft = `${place.id === "/" ? 0 : (place.path.split("/").length - 1) * 14}px`;
-      const box = el("input", label, { attrs: { type: "checkbox" } });
+      const box = el("input", label, { attrs: { type: "checkbox", "data-tip": this.t("tipPlace") } });
       box.checked = synced.includes(place.id);
       label.append(place.id === "/" ? place.path : place.path.split("/").pop()!);
       box.onchange = async () => {

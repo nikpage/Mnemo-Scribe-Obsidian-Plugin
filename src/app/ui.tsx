@@ -23,16 +23,17 @@ const VARIANT: Record<ButtonVariant, string> = {
 export function Button({
   variant = "secondary",
   size,
+  tip,
   className = "",
   ...props
-}: React.ButtonHTMLAttributes<HTMLButtonElement> & { variant?: ButtonVariant; size?: "sm" | "md" | "lg" }) {
-  return <button type="button" {...props} className={`${VARIANT[variant]} ${size === "sm" ? "is-small" : ""} ${className}`} />;
+}: React.ButtonHTMLAttributes<HTMLButtonElement> & { variant?: ButtonVariant; size?: "sm" | "md" | "lg"; tip?: string }) {
+  return <button type="button" data-tip={tip} {...props} className={`${VARIANT[variant]} ${size === "sm" ? "is-small" : ""} ${className}`} />;
 }
 
 export function Cost({ credits, why }: { credits: number | null | undefined; why?: string }) {
   if (credits === 0) return null;
   return (
-    <span title={why} aria-label={why} className="scribe-cost" style={credits == null ? { visibility: "hidden" } : undefined}>
+    <span data-tip={why} aria-label={why} className="scribe-cost" style={credits == null ? { visibility: "hidden" } : undefined}>
       <Coins aria-hidden />
       {credits ?? 0}
     </span>
@@ -58,12 +59,13 @@ export function Chip({
   on = false,
   count,
   onRemove,
+  tip,
   className = "",
   children,
   ...props
-}: React.ButtonHTMLAttributes<HTMLButtonElement> & { on?: boolean; count?: number; onRemove?: () => void }) {
+}: React.ButtonHTMLAttributes<HTMLButtonElement> & { on?: boolean; count?: number; onRemove?: () => void; tip?: string }) {
   return (
-    <button type="button" aria-pressed={onRemove ? undefined : on} onClick={onRemove} {...props} className={`scribe-chip ${className}`}>
+    <button type="button" data-tip={tip} aria-pressed={onRemove ? undefined : on} onClick={onRemove} {...props} className={`scribe-chip ${className}`}>
       {children}
       {count !== undefined && <span className="scribe-count">{count}</span>}
       {onRemove && <span aria-hidden>×</span>}
@@ -71,17 +73,17 @@ export function Chip({
   );
 }
 
-export function Pill({ children, onClick, onRemove, removeLabel }: { children: React.ReactNode; onClick?: () => void; onRemove: () => void; removeLabel: string }) {
+export function Pill({ children, onClick, onRemove, removeLabel, tip, removeTip }: { children: React.ReactNode; onClick?: () => void; onRemove: () => void; removeLabel: string; tip?: string; removeTip?: string }) {
   return (
     <span className="scribe-pill">
       {onClick ? (
-        <button type="button" onClick={onClick}>
+        <button type="button" data-tip={tip} onClick={onClick}>
           {children}
         </button>
       ) : (
-        <span>{children}</span>
+        <span data-tip={tip}>{children}</span>
       )}
-      <button type="button" onClick={onRemove} aria-label={removeLabel}>
+      <button type="button" data-tip={removeTip} onClick={onRemove} aria-label={removeLabel}>
         ×
       </button>
     </span>

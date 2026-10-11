@@ -8,17 +8,18 @@ import { SearchProvider } from "@/hooks/use-search";
 import { BrainOf } from "@/components/what-next";
 import { SearchPane } from "@/components/panes/search";
 import { NoteAbout } from "@/components/note-about";
+import { HomeDashboard } from "@/components/home-dashboard";
 import { type ListNote, ShellContext } from "./shell";
 
 /**
- * The app's own screens in the panel: Brain is the app's Brain panel, Search
+ * The app's own screens in the panel: Home is the app's home dashboard, Brain its Brain panel, Search
  * its Search pane (Ask included), This note what its note screen shows
  * beside a note. Built from the app's files; only the parts, the requests
  * and the links are this app's (`./ui`, `./http`, `./link`), so a change to
  * a screen in the app is the same change here.
  */
 
-export type Screen = "brain" | "search" | "note";
+export type Screen = "home" | "brain" | "search" | "note";
 
 export type ScreenHost = {
   /** The Scribe note open in this app, if any. */
@@ -48,7 +49,9 @@ function Screens({ screen, host }: { screen: Screen; host: ScreenHost }) {
   return (
     <ShellContext.Provider value={{ recordings: notes, open }}>
       {problem && <p className="scribe-error">{problem}</p>}
-      {screen === "brain" ? (
+      {screen === "home" ? (
+        <HomeDashboard links={false} />
+      ) : screen === "brain" ? (
         <BrainOf key={host.noteId ?? ""} notes={notes} centreId={host.noteId ?? undefined} />
       ) : screen === "search" ? (
         <SearchProvider notes={all}>

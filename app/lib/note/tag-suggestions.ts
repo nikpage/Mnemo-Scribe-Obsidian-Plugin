@@ -1,0 +1,499 @@
+// [Filer, Librarian]
+
+import type { SupabaseClient } from "@supabase/supabase-js";
+import { claim, release } from "@/lib/ai/claim";
+import { noteText } from "@/lib/note/build";
+import { normalizeSegment, normalizeTags, singular } from "@/lib/note/filing";
+import { primaryLanguage } from "@/lib/note/language";
+import { READ } from "@/lib/note/shelf";
+import { loadSubjects } from "@/lib/note/subjects";
+import { canParent, parentsOf } from "@/lib/note/tag-tree";
+import { type Earned, type OwnTag, type Proposal, type TagSummary, barred, checkNotes, planTags } from "@/lib/note/tagging";
+import { applyVocabulary, loadTagRows, loadVocabulary, rememberTags } from "@/lib/note/vocabulary";
+
+/**
+ * Everything the app asks before it changes a tag, and what happens when the
+ * person answers. A skipped suggestion is never asked again (the table's
+ * unique index); a kept one is carried out here, the one place tags change
+ * across many notes at once.
+ */
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type Admin = SupabaseClient<any, any, any>;
+
+export const KINDS = ["new", "meaning", "merge", "retire", "parent", "add", "remove"] as const;
+export type Kind = (typeof KINDS)[number];
+export type Source = "model" | "spoken" | "folder" | "tidy";
+
+export interface Suggestion {
+  id: string;
+  kind: Kind;
+  tag: string;
+  target: string;
+  recording_id: string;
+  meaning: string | null;
+  notes: { id: string; why: string }[];
+  why: string | null;
+  source: Source;
+}
+
+/** A tag the model thinks notes need shows once this many notes need it. */
+export const NEW_TAG_NOTES = 2;
+
+/**
+ * Whether the person is asked yet. A tag the model proposes waits for a
+ * second note; one the person said out loud, a folder they used, or a
+ * tidy-up's is asked at once.
+ */
+export function shown(s: Pick<Suggestion, "kind" | "source" | "notes">): boolean {
+  return s.kind !== "new" || s.source !== "model" || s.notes.length >= NEW_TAG_NOTES;
+}
+
+/** The tags the person has, with their meanings: those in use, and those given a meaning. */
+export async function ownTags(admin: Admin, userId: string, inUse: string[]): Promise<(OwnTag & { parent: string | null; checked: string | null })[]> {
+  const { data } = await admin
+    .from("tag_vocabulary")
+    .select("name, meaning, parent, checked_meaning")
+    .eq("user_id", userId);
+  const used = new Set(inUse);
+  return (data || [])
+    .filter((row: { name: string; meaning: string | null }) => row.meaning || used.has(row.name))
+    .map((row: { name: string; meaning: string | null; parent: string | null; checked_meaning: string | null }) => ({
+      name: row.name,
+      meaning: row.meaning ?? null,
+      parent: row.parent ?? null,
+      checked: row.checked_meaning ?? null,
+    }));
+}
+
+/** New tags already asked about and skipped (or, with `any`, asked at all): never proposed again. */
+export async function skippedNames(admin: Admin, userId: string, any = false): Promise<Set<string>> {
+  const query = admin.from("tag_suggestions").select("tag").eq("user_id", userId).eq("kind", "new");
+  const { data } = await (any ? query : query.eq("state", "skipped"));
+  return new Set((data || []).map((row: { tag: string }) => row.tag));
+}
+
+/**
+ * The questions waiting for the person, as the Tags screen shows them: a
+ * model's new tag once two notes need it, and no add or remove the person
+ * already made by hand. Each with its notes' titles.
+ */
+export async function openQuestions(admin: Admin, userId: string): Promise<(Suggestion & { title: string; notes: { id: string; why: string; title: string }[] })[]> {
+  const { data } = await admin
+    .from("tag_suggestions")
+    .select("id, kind, tag, target, recording_id, meaning, notes, why, source")
+    .eq("user_id", userId)
+    .eq("state", "open")
+    .order("created_at", { ascending: true });
+  const open = ((data || []) as Suggestion[]).filter(shown);
+  const ids = [...new Set(open.flatMap((s) => (s.recording_id ? [s.recording_id] : s.notes.map((n) => n.id))))];
+  const { data: notes } = ids.length
+    ? await admin.from("recordings").select("id, label, tags").eq("user_id", userId).in("id", ids)
+    : { data: [] };
+  const byId = new Map((notes || []).map((n: { id: string; label: string; tags: string[] | null }) => [n.id, n]));
+  return open
+    .filter((s) => {
+      if (s.kind !== "add" && s.kind !== "remove") return true;
+      const note = byId.get(s.recording_id);
+      return Boolean(note) && (s.kind === "add") !== (note!.tags || []).includes(s.tag);
+    })
+    .map((s) => ({
+      ...s,
+      notes: s.notes.map((n) => ({ ...n, title: byId.get(n.id)?.label ?? "" })),
+      title: s.recording_id ? (byId.get(s.recording_id)?.label ?? "") : "",
+    }));
+}
+
+/** The names the person's clients go by: never tags. */
+export async function clientNames(admin: Admin, userId: string): Promise<string[]> {
+  return (await loadSubjects(admin, userId)).flatMap((s) => [s.name, ...s.aliases]);
+}
+
+/**
+ * Records new tags a note seems to need, or adds the note to a proposal
+ * already open (in either spelling). Never throws: a proposal lost costs a
+ * question, never the note.
+ */
+export async function proposeTags(admin: Admin, userId: string, noteId: string, proposals: Proposal[], source: Source): Promise<void> {
+  if (proposals.length === 0) return;
+  try {
+    const { data } = await admin
+      .from("tag_suggestions")
+      .select("id, tag, state, notes")
+      .eq("user_id", userId)
+      .eq("kind", "new");
+    const rows = (data || []) as { id: string; tag: string; state: string; notes: { id: string; why: string }[] }[];
+    for (const p of proposals) {
+      const known = rows.find((row) => singular(row.tag) === singular(p.tag));
+      if (known && known.state !== "open") continue;
+      if (known) {
+        if (known.notes.some((n) => n.id === noteId)) continue;
+        known.notes = [...known.notes, { id: noteId, why: p.why }];
+        await admin.from("tag_suggestions").update({ notes: known.notes }).eq("user_id", userId).eq("id", known.id);
+        continue;
+      }
+      const { data: made } = await admin
+        .from("tag_suggestions")
+        .insert({
+          user_id: userId,
+          kind: "new",
+          tag: p.tag,
+          target: p.parent ?? "",
+          meaning: p.meaning,
+          notes: [{ id: noteId, why: p.why }],
+          source,
+        })
+        .select("id, tag, state, notes")
+        .single();
+      if (made) rows.push(made);
+    }
+  } catch (err) {
+    console.error("Tag proposal not saved (non-fatal):", err);
+  }
+}
+
+/** One note's tags changed, with the sentences that earned them. */
+async function retag(
+  admin: Admin,
+  userId: string,
+  noteId: string,
+  change: (tags: string[], why: Record<string, string>) => { tags: string[]; why: Record<string, string> }
+): Promise<void> {
+  const { data: note } = await admin
+    .from("recordings")
+    .select("tags, machine_tags, tag_why")
+    .eq("user_id", userId)
+    .eq("id", noteId)
+    .maybeSingle();
+  if (!note) return;
+  const before = (note.tags || []) as string[];
+  const next = change([...before], { ...((note.tag_why || {}) as Record<string, string>) });
+  const tags = normalizeTags(next.tags);
+  const removed = before.filter((tag) => !tags.includes(tag));
+  const machine = normalizeTags([...((note.machine_tags || []) as string[]).filter((tag) => !removed.includes(tag)), ...tags]);
+  const why = Object.fromEntries(Object.entries(next.why).filter(([tag]) => tags.includes(tag)));
+  await admin
+    .from("recordings")
+    .update({ tags, machine_tags: machine, tag_why: why, filed: true, updated_at: new Date().toISOString() })
+    .eq("user_id", userId)
+    .eq("id", noteId);
+}
+
+/** Every note carrying `tag`, by id. */
+async function carrying(admin: Admin, userId: string, tag: string): Promise<string[]> {
+  const { data } = await admin.from("recordings").select("id").eq("user_id", userId).contains("tags", [tag]);
+  return (data || []).map((row: { id: string }) => row.id);
+}
+
+/**
+ * Carries out or skips one suggestion. `edit` is the person's change before
+ * keeping it: a reworded meaning, another parent, another tag to merge into.
+ * Returns false when the suggestion is not this person's or already answered.
+ */
+export async function decide(
+  admin: Admin,
+  userId: string,
+  id: string,
+  keep: boolean,
+  edit: { meaning?: string; target?: string } = {}
+): Promise<boolean> {
+  const { data: row } = await admin
+    .from("tag_suggestions")
+    .select("id, kind, tag, target, recording_id, meaning, notes, why, source, state")
+    .eq("user_id", userId)
+    .eq("id", id)
+    .maybeSingle();
+  if (!row || row.state !== "open") return false;
+  const s = row as Suggestion & { state: string };
+  const meaning = (edit.meaning ?? s.meaning ?? "").trim() || null;
+  const target = edit.target !== undefined ? normalizeSegment(edit.target) : s.target;
+
+  if (keep) {
+    const now = new Date().toISOString();
+    if (s.kind === "new") {
+      await rememberTags(admin, userId, [s.tag], true);
+      const rows = await loadTagRows(admin, userId);
+      const parent = target && rows.some((r) => r.name === target) && canParent(s.tag, target, parentsOf(rows)) ? target : null;
+      await admin.from("tag_vocabulary").update({ meaning, parent, updated_at: now }).eq("user_id", userId).eq("name", s.tag);
+      for (const note of s.notes) {
+        await retag(admin, userId, note.id, (tags, why) => ({ tags: [...tags, s.tag], why: { ...why, [s.tag]: note.why } }));
+      }
+    } else if (s.kind === "meaning") {
+      await rememberTags(admin, userId, [s.tag], true);
+      await admin.from("tag_vocabulary").update({ meaning, updated_at: now }).eq("user_id", userId).eq("name", s.tag);
+    } else if (s.kind === "merge") {
+      if (!target || target === s.tag) return false;
+      await rememberTags(admin, userId, [target], true);
+      for (const noteId of await carrying(admin, userId, s.tag)) {
+        await retag(admin, userId, noteId, (tags, why) => ({
+          tags: [...tags.filter((tag) => tag !== s.tag), target],
+          why: { ...(why[s.tag] !== undefined ? { [target]: why[s.tag] } : {}), ...why },
+        }));
+      }
+      const { data: into } = await admin.from("tag_vocabulary").select("aliases").eq("user_id", userId).eq("name", target).maybeSingle();
+      await admin
+        .from("tag_vocabulary")
+        .update({ aliases: normalizeTags([...((into?.aliases as string[]) || []), s.tag]), updated_at: now })
+        .eq("user_id", userId)
+        .eq("name", target);
+      await admin.from("tag_vocabulary").update({ parent: target }).eq("user_id", userId).eq("parent", s.tag);
+      await admin.from("tag_vocabulary").delete().eq("user_id", userId).eq("name", s.tag);
+    } else if (s.kind === "retire") {
+      for (const noteId of await carrying(admin, userId, s.tag)) {
+        await retag(admin, userId, noteId, (tags, why) => ({ tags: tags.filter((tag) => tag !== s.tag), why }));
+      }
+      const { data: gone } = await admin.from("tag_vocabulary").select("parent").eq("user_id", userId).eq("name", s.tag).maybeSingle();
+      await admin.from("tag_vocabulary").update({ parent: gone?.parent ?? null }).eq("user_id", userId).eq("parent", s.tag);
+      await admin.from("tag_vocabulary").delete().eq("user_id", userId).eq("name", s.tag);
+    } else if (s.kind === "parent") {
+      await rememberTags(admin, userId, [s.tag, target], true);
+      if (!canParent(s.tag, target, parentsOf(await loadTagRows(admin, userId)))) return false;
+      await admin.from("tag_vocabulary").update({ parent: target, updated_at: now }).eq("user_id", userId).eq("name", s.tag);
+    } else if (s.kind === "add") {
+      await retag(admin, userId, s.recording_id, (tags, why) => ({ tags: [...tags, s.tag], why: { ...why, [s.tag]: s.why ?? "" } }));
+    } else if (s.kind === "remove") {
+      await retag(admin, userId, s.recording_id, (tags, why) => ({ tags: tags.filter((tag) => tag !== s.tag), why }));
+    }
+  }
+
+  await admin
+    .from("tag_suggestions")
+    .update({ state: keep ? "kept" : "skipped", decided_at: new Date().toISOString(), ...(keep ? { meaning, target } : {}) })
+    .eq("user_id", userId)
+    .eq("id", id);
+  return true;
+}
+
+/** The notes the tag work reads: finished, on the shelves the AI may read. */
+async function readableNotes(admin: Admin, userId: string) {
+  const { data } = await admin
+    .from("recordings")
+    .select("id, label, tags, tag_why, body_md, transcript, analysis")
+    .eq("user_id", userId)
+    .eq("status", "done")
+    .in("shelf", READ)
+    .eq("report", false);
+  return (data || []) as {
+    id: string;
+    label: string;
+    tags: string[] | null;
+    tag_why: Record<string, string> | null;
+    body_md: string | null;
+    transcript: { utterances?: { text?: string }[] } | null;
+    analysis: { summary?: string } | null;
+  }[];
+}
+
+/** Saves suggestions, never re-asking one already answered. */
+async function ask(admin: Admin, userId: string, rows: Omit<Suggestion, "id">[]): Promise<void> {
+  if (rows.length === 0) return;
+  await admin
+    .from("tag_suggestions")
+    .upsert(rows.map((row) => ({ user_id: userId, ...row })), { onConflict: "user_id,kind,tag,target,recording_id", ignoreDuplicates: true });
+}
+
+const blank: Pick<Suggestion, "target" | "recording_id" | "meaning" | "notes" | "why"> = { target: "", recording_id: "", meaning: null, notes: [], why: null };
+
+/**
+ * A tidy-up: one look at every tag and the notes carrying it, saved as
+ * suggestions. A tag on fewer than two notes is offered for retirement
+ * without asking a model.
+ */
+export async function tidy(admin: Admin, userId: string, runId: string): Promise<void> {
+  const notes = await readableNotes(admin, userId);
+  const inUse = [...new Set(notes.flatMap((n) => n.tags || []))];
+  const own = await ownTags(admin, userId, inUse);
+  const summaries: TagSummary[] = own.map((tag) => ({
+    name: tag.name,
+    meaning: tag.meaning,
+    parent: tag.parent,
+    notes: notes.filter((n) => (n.tags || []).includes(tag.name)).map((n) => ({ title: n.label, summary: n.analysis?.summary || noteText(n).slice(0, 240) })),
+  }));
+  const ctx = { userId };
+  const subjects = await clientNames(admin, userId);
+  const plan = await planTags(summaries, { lang: await primaryLanguage(admin, userId), subjects, asked: await skippedNames(admin, userId, true), ctx });
+
+  const thin = summaries.filter((t) => t.notes.length < 2 && !plan.retires.some((r) => r.tag === t.name) && !plan.merges.some((m) => m.tag === t.name));
+  await ask(admin, userId, [
+    ...plan.retires.map((r) => ({ ...blank, kind: "retire" as const, tag: r.tag, why: r.why, source: "tidy" as const })),
+    ...thin.map((t) => ({ ...blank, kind: "retire" as const, tag: t.name, why: t.notes.length ? "one note" : "no notes", source: "tidy" as const })),
+    ...plan.merges.map((m) => ({ ...blank, kind: "merge" as const, tag: m.tag, target: m.into, why: m.why, source: "tidy" as const })),
+    ...plan.meanings.map((m) => ({ ...blank, kind: "meaning" as const, tag: m.tag, meaning: m.meaning, source: "tidy" as const })),
+    ...plan.parents.map((p) => ({ ...blank, kind: "parent" as const, tag: p.tag, target: p.parent, source: "tidy" as const })),
+    ...plan.added.map((a) => ({ ...blank, kind: "new" as const, tag: a.tag, target: a.parent ?? "", meaning: a.meaning, why: a.why, source: "tidy" as const })),
+  ]);
+  await finish(admin, userId, runId);
+}
+
+/**
+ * Every note read again against each tag whose meaning changed since the
+ * last check, as suggestions to add or remove that tag. A tag the person
+ * gave a note (typed, said, from a vault) is never offered for removal.
+ */
+export async function recheck(admin: Admin, userId: string, runId: string): Promise<void> {
+  for (let round = 0; round < 3; round++) {
+    const notes = await readableNotes(admin, userId);
+    const own = await ownTags(admin, userId, [...new Set(notes.flatMap((n) => n.tags || []))]);
+    const due = own.filter((tag) => tag.meaning && tag.meaning !== tag.checked);
+    if (due.length === 0) break;
+    const verdicts = await checkNotes(
+      notes.map((n) => ({ id: n.id, text: noteText(n) })),
+      due,
+      { subjects: await clientNames(admin, userId), ctx: { userId } }
+    );
+    await ask(admin, userId, changesFrom(notes, due.map((t) => t.name), verdicts));
+    // A tag already on a note and found to fit gets its sentence: nothing changes but the why.
+    for (const note of notes) {
+      const found = foundWhy(note, verdicts.get(note.id) || []);
+      if (found) await admin.from("recordings").update({ tag_why: found }).eq("user_id", userId).eq("id", note.id);
+    }
+    for (const tag of due) {
+      await admin.from("tag_vocabulary").update({ checked_meaning: tag.meaning }).eq("user_id", userId).eq("name", tag.name);
+    }
+  }
+  await finish(admin, userId, runId);
+}
+
+/**
+ * A note's sentences once a re-check found the tags it already carries fit:
+ * each such tag without one gets the quote. Null when nothing is new. A tag
+ * the person gave ("") keeps saying so.
+ */
+export function foundWhy(note: { tags: string[] | null; tag_why: Record<string, string> | null }, fits: Earned[]): Record<string, string> | null {
+  const why = { ...(note.tag_why || {}) };
+  let changed = false;
+  for (const f of fits) {
+    if ((note.tags || []).includes(f.tag) && why[f.tag] === undefined) {
+      why[f.tag] = f.why;
+      changed = true;
+    }
+  }
+  return changed ? why : null;
+}
+
+/** What a re-check found, as suggestions: a tag that fits and is missing, one that is there and does not fit. */
+export function changesFrom(
+  notes: { id: string; tags: string[] | null; tag_why: Record<string, string> | null }[],
+  checked: string[],
+  verdicts: Map<string, Earned[]>
+): Omit<Suggestion, "id">[] {
+  const out: Omit<Suggestion, "id">[] = [];
+  for (const note of notes) {
+    const fits = verdicts.get(note.id);
+    if (!fits) continue;
+    const has = new Set(note.tags || []);
+    for (const tag of checked) {
+      const earned = fits.find((f) => f.tag === tag);
+      if (earned && !has.has(tag)) out.push({ ...blank, kind: "add", tag, recording_id: note.id, why: earned.why, source: "tidy" });
+      const given = (note.tag_why || {})[tag] === "";
+      if (!earned && has.has(tag) && !given) out.push({ ...blank, kind: "remove", tag, recording_id: note.id, source: "tidy" });
+    }
+  }
+  return out;
+}
+
+async function finish(admin: Admin, userId: string, runId: string): Promise<void> {
+  await admin.from("tag_runs").update({ status: "done", finished_at: new Date().toISOString() }).eq("user_id", userId).eq("id", runId);
+}
+
+/** One tidy-up or re-check per account at a time, held until it is written. */
+export const TAGS_CLAIM = "tags:run";
+/** Netlify's ceiling for a background function: a run older than this died. */
+export const TAG_RUN_MS = 15 * 60 * 1000;
+
+/** Runs one recorded tidy-up or re-check. Never throws: it runs in the background. */
+export async function runTags(admin: Admin, runId: string): Promise<void> {
+  const { data: run } = await admin.from("tag_runs").select("id, user_id, kind").eq("id", runId).maybeSingle();
+  if (!run) return;
+  try {
+    if (run.kind === "tidy") await tidy(admin, run.user_id, run.id);
+    else await recheck(admin, run.user_id, run.id);
+  } catch (err) {
+    console.error(`Tag ${run.kind} failed:`, err);
+    await admin
+      .from("tag_runs")
+      .update({ status: "failed", error: err instanceof Error ? err.message.slice(0, 300) : "failed", finished_at: new Date().toISOString() })
+      .eq("user_id", run.user_id)
+      .eq("id", run.id);
+  } finally {
+    await release(admin, run.user_id, TAGS_CLAIM);
+  }
+}
+
+/**
+ * Records a run and starts it: on Netlify in the background function, under
+ * `next dev` here. Null when one is already running for this account.
+ */
+export async function startRun(admin: Admin, userId: string, kind: "tidy" | "recheck", base: string): Promise<string | null> {
+  if (!(await claim(admin, userId, TAGS_CLAIM, TAG_RUN_MS))) return null;
+  const { data: run, error } = await admin.from("tag_runs").insert({ user_id: userId, kind }).select("id").single();
+  if (error || !run) {
+    await release(admin, userId, TAGS_CLAIM);
+    return null;
+  }
+  if (process.env.SITE_ID) {
+    const started = await fetch(new URL("/.netlify/functions/tags-background", base), {
+      method: "POST",
+      headers: { "x-cron-key": process.env.CRON_SECRET ?? "" },
+      body: JSON.stringify({ runId: run.id }),
+    }).catch((err: unknown) => err);
+    if (!(started instanceof Response) || started.status !== 202) {
+      await admin
+        .from("tag_runs")
+        .update({ status: "failed", error: "background function did not start" })
+        .eq("user_id", userId)
+        .eq("id", run.id);
+      await release(admin, userId, TAGS_CLAIM);
+      return null;
+    }
+  } else {
+    await runTags(admin, run.id);
+  }
+  return run.id;
+}
+
+/** Structural questions still open: the tags themselves are not settled yet. */
+const SHAPING: Kind[] = ["new", "meaning", "merge", "retire", "parent"];
+
+/**
+ * Whether every note should be read again now: some tag's meaning changed
+ * since the last check and nothing about the tags themselves is still open.
+ */
+export async function recheckDue(admin: Admin, userId: string): Promise<boolean> {
+  const { data: open } = await admin
+    .from("tag_suggestions")
+    .select("kind, source, notes")
+    .eq("user_id", userId)
+    .eq("state", "open")
+    .in("kind", SHAPING);
+  if ((open || []).some((s: Pick<Suggestion, "kind" | "source" | "notes">) => shown(s))) return false;
+  const { data: tags } = await admin.from("tag_vocabulary").select("meaning, checked_meaning").eq("user_id", userId).not("meaning", "is", null);
+  return (tags || []).some((t: { meaning: string; checked_meaning: string | null }) => t.meaning !== t.checked_meaning);
+}
+
+/** Every tag on the person's notes. */
+export async function tagsInUse(admin: Admin, userId: string): Promise<string[]> {
+  const { data } = await admin.from("recordings").select("tags").eq("user_id", userId);
+  return [...new Set((data || []).flatMap((row: { tags: string[] | null }) => row.tags || []))];
+}
+
+/**
+ * Words the person gave a note — said out loud, or a folder it sat in. Those
+ * that are already their tags go on the note; the rest are asked about as
+ * new tags. A state word or a client's name is neither.
+ */
+export async function givenTags(admin: Admin, userId: string, noteId: string, words: string[], source: "spoken" | "folder"): Promise<string[]> {
+  const subjects = await clientNames(admin, userId);
+  const clean = applyVocabulary(await loadVocabulary(admin, userId), normalizeTags(words)).filter((tag) => !barred(tag, subjects));
+  if (clean.length === 0) return [];
+  const own = new Set((await ownTags(admin, userId, await tagsInUse(admin, userId))).map((tag) => tag.name));
+  const skipped = await skippedNames(admin, userId);
+  await proposeTags(
+    admin,
+    userId,
+    noteId,
+    clean.filter((tag) => !own.has(tag) && !skipped.has(tag)).map((tag) => ({ tag, meaning: "", parent: null, why: "" })),
+    source
+  );
+  return clean.filter((tag) => own.has(tag));
+}

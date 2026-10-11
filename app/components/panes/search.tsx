@@ -16,6 +16,7 @@ import { SpentLine } from "@/components/what-next";
 
 type Spent = { costUsd: number; readTokens: number; wroteTokens: number };
 import { NoteShortcuts } from "@/components/note-shortcuts";
+import { tipOf } from "@/lib/tooltip";
 import { Button, Chip, Cost, Heading, Input, List, Notice, selectClass } from "@/components/ui";
 
 /** How far back a search looks. Days, or everything. */
@@ -132,30 +133,30 @@ export function SearchPane() {
     <div className="mx-auto max-w-2xl p-4 md:p-6">
       {/* On a wide screen the sidebar's box is this box; one is enough. */}
       <div className="mb-3 flex gap-2 md:hidden">
-        <Input type="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder={t("searchPlaceholder")} />
+        <Input type="search" data-tip={t("tipSearchBox")} value={query} onChange={(e) => setQuery(e.target.value)} placeholder={t("searchPlaceholder")} />
       </div>
 
       <div className="mb-4 flex flex-wrap items-center gap-2 text-sm">
-        <Chip on={showFilters} aria-expanded={showFilters} onClick={() => setShowFilters(!showFilters)}>
+        <Chip on={showFilters} aria-expanded={showFilters} tip={t("tipSearchFilter")} onClick={() => setShowFilters(!showFilters)}>
           {t("filter")}
         </Chip>
         {showFilters && (
           <>
-            <select value={range} onChange={(e) => setRange(e.target.value as Range)} className={selectClass}>
+            <select data-tip={t("tipSearchRange")} value={range} onChange={(e) => setRange(e.target.value as Range)} className={selectClass}>
               <option value="any">{t("filterAnyTime")}</option>
               <option value="week">{t("filterWeek")}</option>
               <option value="month">{t("filterMonth")}</option>
               <option value="year">{t("filterYear")}</option>
             </select>
-            <select value={language} onChange={(e) => setLanguage(e.target.value)} className={selectClass}>
+            <select data-tip={t("tipSearchLanguage")} value={language} onChange={(e) => setLanguage(e.target.value)} className={selectClass}>
               <option value="">{t("filterAnyLang")}</option>
               <option value="en">{t("filterEnglish")}</option>
               <option value="cs">{t("filterCzech")}</option>
             </select>
-            <Chip on={actionsOnly} onClick={() => setActionsOnly(!actionsOnly)}>
+            <Chip on={actionsOnly} tip={t("tipSearchActions")} onClick={() => setActionsOnly(!actionsOnly)}>
               {t("filterActions")}
             </Chip>
-            <select value={where} onChange={(e) => setWhere(e.target.value as typeof where)} className={selectClass}>
+            <select data-tip={t("tipSearchShelf")} value={where} onChange={(e) => setWhere(e.target.value as typeof where)} className={selectClass}>
               <option value="">{t("shelfNormal")}</option>
               <option value="cold">{t("shelfCold")}</option>
               <option value="trash">{t("shelfTrash")}</option>
@@ -170,6 +171,7 @@ export function SearchPane() {
             <Chip
               key={tag}
               on={tagFilters.includes(tag)}
+              tip={t("tipSearchTag")}
               onClick={() =>
                 setTagFilters((prev) => (prev.includes(tag) ? prev.filter((x) => x !== tag) : [...prev, tag]))
               }
@@ -238,11 +240,11 @@ export function SearchPane() {
           {/* The two paid ways further, after the free answer has been seen. */}
           {!where && (
             <div className="mt-4 flex flex-wrap gap-2">
-              <Button onClick={runFuzzy} disabled={fuzzying || fuzzy}>
+              <Button tip={t("tipSearchMeaning")} onClick={runFuzzy} disabled={fuzzying || fuzzy}>
                 {fuzzying ? t("fuzzying") : t("searchByMeaning")}
               </Button>
               {trimmed.length >= 3 && (
-                <Button onClick={ask} disabled={asking} title={askWhy}>
+                <Button tip={tipOf(t("tipSearchAsk"), askWhy)} onClick={ask} disabled={asking}>
                   {asking ? t("asking") : t("askNotes")}
                   <Cost credits={price?.credits} why={askWhy} />
                 </Button>

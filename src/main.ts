@@ -175,8 +175,8 @@ export default class MnemoPlugin extends Plugin {
         })
     );
 
-    this.addRibbonIcon("brain", "Mnemo Scribe: panel", () => void this.showPanel());
-    this.addRibbonIcon("mic", "Mnemo Scribe: record a note", () => void this.record());
+    this.addRibbonIcon("brain", "Mnemo Scribe panel: Home, Brain, Search, this note and Sync", () => void this.showPanel());
+    this.addRibbonIcon("mic", "Mnemo Scribe: record a voice note, transcribed, summarised and filed", () => void this.record());
 
     // An edit in a synced folder is a note to send back, once the typing
     // stops. Every other file in the vault is none of this plugin's business.
@@ -441,6 +441,8 @@ export default class MnemoPlugin extends Plugin {
   private setStatus(text: string) {
     this.statusText = text;
     this.status?.setText(`Mnemo Scribe: ${text}`);
+    this.status?.setAttribute("aria-label", `${text}. Click to sync now: sends your edits and fetches anything new.`);
+    this.status?.setAttribute("data-tooltip-position", "top");
     for (const leaf of this.app.workspace.getLeavesOfType(MNEMO_VIEW)) {
       if (leaf.view instanceof MnemoSearchView) leaf.view.refreshStatus();
     }
@@ -598,7 +600,7 @@ class MnemoSettingTab extends PluginSettingTab {
       const row = new Setting(containerEl)
         .setName(folder === WHOLE_VAULT ? "Whole vault" : folder.split("/").pop()!)
         .addToggle((toggle) =>
-          toggle.setValue(settings.synced.includes(folder)).onChange(async (on) => {
+          toggle.setTooltip("Keeps the notes in this folder in step with Mnemo Scribe, both ways. Files are rewritten where they stand, never moved.").setValue(settings.synced.includes(folder)).onChange(async (on) => {
             await this.plugin.tick(folder, on);
           })
         );
