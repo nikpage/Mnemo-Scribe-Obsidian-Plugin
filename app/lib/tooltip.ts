@@ -60,13 +60,40 @@ export function tipOf(...parts: (string | undefined | false | null)[]): string {
   return parts.filter(Boolean).join(" ");
 }
 
-const installed = new WeakSet<Document>();
+/** Who holds a document's tips: the listeners go when the last holder lets go. */
+const installed = new WeakMap<Document, { holders: number; remove: () => void }>();
 
-export function installTips(doc: Document = document): void {
-  if (installed.has(doc)) return;
+/** Puts tips on `doc` and returns the one call that gives them up. Each caller
+ *  holds them; the listeners and the box are removed when the last lets go, so
+ *  a plugin that reloads leaves no second copy running beside the new one. */
+export function installTips(doc: Document = document): () => void {
   const win = doc.defaultView;
-  if (!win) return;
-  installed.add(doc);
+  if (!win) return () => {};
+  let held = installed.get(doc);
+  if (!held) {
+    held = { holders: 0, remove: setUp(doc, win) };
+    installed.set(doc, held);
+  }
+  const mine = held;
+  mine.holders += 1;
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    mine.holders -= 1;
+    if (mine.holders > 0) return;
+    mine.remove();
+    if (installed.get(doc) === mine) installed.delete(doc);
+  };
+}
+
+function setUp(doc: Document, win: Window & typeof globalThis): () => void {
+  const listeners: Array<[string, EventListener, boolean | AddEventListenerOptions | undefined]> = [];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const on = (type: string, handler: (e: any) => void, options?: boolean | AddEventListenerOptions) => {
+    doc.addEventListener(type, handler, options);
+    listeners.push([type, handler, options]);
+  };
 
   const box = doc.createElement("div");
   box.setAttribute("role", "tooltip");
@@ -121,7 +148,7 @@ export function installTips(doc: Document = document): void {
     current = null;
   };
 
-  doc.addEventListener("mouseover", (e) => {
+  on("mouseover", (e) => {
     if (Date.now() - lastTouch < TOUCH_GHOST_MS) return; // emulated by a tap
     const el = target(e.target);
     if (!el || el === current) return;
@@ -130,25 +157,25 @@ export function installTips(doc: Document = document): void {
     hoverTimer = win.setTimeout(() => show(el, pointer), HOVER_MS);
   });
   // The mouse may move on during the pause; the box hangs where it ends up.
-  doc.addEventListener("mousemove", (e) => {
+  on("mousemove", (e) => {
     if (pointer) pointer = { x: e.clientX, y: e.clientY };
   });
-  doc.addEventListener("mouseout", (e) => {
+  on("mouseout", (e) => {
     const el = target(e.target);
     if (el && !el.contains(e.relatedTarget as Node | null)) hide();
   });
-  doc.addEventListener("focusin", (e) => {
+  on("focusin", (e) => {
     const el = target(e.target);
     if (el && el.matches(":focus-visible")) show(el);
   });
-  doc.addEventListener("focusout", hide);
-  doc.addEventListener("keydown", (e) => {
+  on("focusout", hide);
+  on("keydown", (e) => {
     if (e.key === "Escape") hide();
   });
-  doc.addEventListener("scroll", hide, true);
-  doc.addEventListener("mousedown", hide);
+  on("scroll", hide, true);
+  on("mousedown", hide);
 
-  doc.addEventListener("touchstart", (e) => {
+  on("touchstart", (e) => {
     lastTouch = Date.now();
     pressed = false;
     const el = target(e.target);
@@ -164,13 +191,20 @@ export function installTips(doc: Document = document): void {
     lastTouch = Date.now();
     win.clearTimeout(pressTimer);
   };
-  doc.addEventListener("touchmove", cancelPress, { passive: true });
-  doc.addEventListener("touchcancel", cancelPress, { passive: true });
-  doc.addEventListener("touchend", cancelPress, { passive: true });
-  doc.addEventListener("click", (e) => {
+  on("touchmove", cancelPress, { passive: true });
+  on("touchcancel", cancelPress, { passive: true });
+  on("touchend", cancelPress, { passive: true });
+  on("click", (e) => {
     if (!pressed) return;
     pressed = false;
     e.preventDefault();
     e.stopPropagation();
   }, true);
+
+  return () => {
+    hide();
+    for (const [type, handler, options] of listeners) doc.removeEventListener(type, handler, options);
+    listeners.length = 0;
+    box.remove();
+  };
 }

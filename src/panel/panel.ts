@@ -72,6 +72,7 @@ export class Panel {
   private billingCache: Rates | null = null;
   private drawn = 0;
   private unmount: (() => void) | null = null;
+  private releaseTips: () => void;
 
   private head: HTMLElement;
   private balance: HTMLElement;
@@ -86,7 +87,7 @@ export class Panel {
     private lang: Lang
   ) {
     addStyle(root.ownerDocument);
-    installTips(root.ownerDocument);
+    this.releaseTips = installTips(root.ownerDocument);
     root.replaceChildren();
     root.classList.add("scribe-panel");
     // One line at any width: name, credits, Record. A narrow panel drops
@@ -107,6 +108,14 @@ export class Panel {
 
   private t(key: Key, vars?: Vars) {
     return say(this.lang, key, vars);
+  }
+
+  /** The panel is closed: its screens and its hold on the tooltips go with it. */
+  destroy() {
+    this.drawn += 1;
+    this.unmount?.();
+    this.unmount = null;
+    this.releaseTips();
   }
 
   /** Draws the panel; again whenever the connection changes. */

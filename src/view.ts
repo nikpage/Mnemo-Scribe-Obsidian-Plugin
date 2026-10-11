@@ -96,6 +96,11 @@ export class MnemoSearchView extends ItemView {
     await this.panel.start().catch((err) => new Notice(`Mnemo Scribe: ${(err as Error).message}`));
   }
 
+  async onClose() {
+    this.panel?.destroy();
+    this.panel = null;
+  }
+
   /** The token or the address changed: everything is asked again. */
   async restart() {
     await this.panel?.start();

@@ -152,6 +152,18 @@ export default class MnemoPlugin extends Plugin {
     this.addCommand({ id: "open-panel", name: "Open the Mnemo Scribe panel", callback: () => void this.showPanel() });
     this.addCommand({ id: "record", name: "Record a note", callback: () => void this.record() });
 
+    // Obsidian reopens the panel the moment its view is registered, and the
+    // panel draws from the settings: read them first, or it draws "Connect"
+    // over a key that is saved.
+    let settingsRead = false;
+    try {
+      await this.loadSettings();
+      settingsRead = true;
+    } catch (err) {
+      console.error("Mnemo Scribe: startup failed", err);
+      this.setStatus("settings not loaded");
+    }
+
     this.registerView(
       MNEMO_VIEW,
       (leaf) =>
@@ -206,10 +218,10 @@ export default class MnemoPlugin extends Plugin {
     // Nothing is deleted without asking.
     this.registerEvent(this.app.vault.on("delete", (file) => void this.deleted(file.path)));
 
-    // Settings live on disk and the first pull talks to the network. Neither
-    // is allowed to take the plugin down with it.
+    // The first pull talks to the network: it is not allowed to take the
+    // plugin down with it.
+    if (!settingsRead) return;
     try {
-      await this.loadSettings();
       this.setStatus(this.settings.token ? "ready" : "not connected");
       this.registerInterval(window.setInterval(() => void this.run("both"), Math.max(1, this.settings.interval) * 60_000));
       // Obsidian is slow to start; asking immediately competes with it.
@@ -225,7 +237,7 @@ export default class MnemoPlugin extends Plugin {
       });
     } catch (err) {
       console.error("Mnemo Scribe: startup failed", err);
-      this.setStatus("settings not loaded");
+      this.setStatus("startup failed");
     }
   }
 
