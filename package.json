@@ -1,6 +1,6 @@
 {
   "name": "mnemo-obsidian-plugin",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "private": true,
   "description": "Mnemo — the Obsidian plugin that keeps a vault in step with Scribe.",
   "scripts": {
@@ -19,6 +19,10 @@
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "swr": "2.5.1",
-    "lucide-react": "1.48.0"
+    "lucide-react": "1.48.0",
+    "yaml": "2.9.1",
+    "zod": "4.6.5",
+    "@supabase/supabase-js": "2.97.0",
+    "@google/generative-ai": "0.24.1"
   }
 }
