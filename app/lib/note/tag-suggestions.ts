@@ -185,18 +185,23 @@ async function carrying(admin: Admin, userId: string, tag: string): Promise<stri
   return (data || []).map((row: { id: string }) => row.id);
 }
 
+/** The person's answer to one suggestion, beyond keep or skip. */
+export interface Edit {
+  meaning?: string;
+  target?: string;
+  /** Delete the tag instead of what was asked (a meaning, a merge, a parent). */
+  retire?: boolean;
+  /** Notes whose only tag goes, to the tag each gets instead. */
+  moves?: Record<string, string>;
+}
+
 /**
  * Carries out or skips one suggestion. `edit` is the person's change before
- * keeping it: a reworded meaning, another parent, another tag to merge into.
+ * keeping it: a reworded meaning, another parent, another tag to merge into,
+ * or the tag deleted instead, with the notes it leaves bare moved to another.
  * Returns false when the suggestion is not this person's or already answered.
  */
-export async function decide(
-  admin: Admin,
-  userId: string,
-  id: string,
-  keep: boolean,
-  edit: { meaning?: string; target?: string } = {}
-): Promise<boolean> {
+export async function decide(admin: Admin, userId: string, id: string, keep: boolean, edit: Edit = {}): Promise<boolean> {
   const { data: row } = await admin
     .from("tag_suggestions")
     .select("id, kind, tag, target, recording_id, meaning, notes, why, source, state")
@@ -205,6 +210,7 @@ export async function decide(
     .maybeSingle();
   if (!row || row.state !== "open") return false;
   const s = row as Suggestion & { state: string };
+  if (edit.retire && keep && s.kind !== "new" && s.kind !== "add" && s.kind !== "remove") s.kind = "retire";
   const meaning = (edit.meaning ?? s.meaning ?? "").trim() || null;
   const target = edit.target !== undefined ? normalizeSegment(edit.target) : s.target;
 
@@ -239,8 +245,14 @@ export async function decide(
       await admin.from("tag_vocabulary").update({ parent: target }).eq("user_id", userId).eq("parent", s.tag);
       await admin.from("tag_vocabulary").delete().eq("user_id", userId).eq("name", s.tag);
     } else if (s.kind === "retire") {
+      // A note left bare goes to the tag the person ticked, if that tag is theirs.
+      const theirs = new Set(edit.moves ? (await loadTagRows(admin, userId)).map((r) => r.name) : []);
       for (const noteId of await carrying(admin, userId, s.tag)) {
-        await retag(admin, userId, noteId, (tags, why) => ({ tags: tags.filter((tag) => tag !== s.tag), why }));
+        const to = normalizeSegment(edit.moves?.[noteId] ?? "");
+        await retag(admin, userId, noteId, (tags, why) => {
+          const rest = tags.filter((tag) => tag !== s.tag);
+          return rest.length === 0 && to && to !== s.tag && theirs.has(to) ? { tags: [to], why: { ...why, [to]: why[to] ?? "" } } : { tags: rest, why };
+        });
       }
       const { data: gone } = await admin.from("tag_vocabulary").select("parent").eq("user_id", userId).eq("name", s.tag).maybeSingle();
       await admin.from("tag_vocabulary").update({ parent: gone?.parent ?? null }).eq("user_id", userId).eq("parent", s.tag);
@@ -303,11 +315,17 @@ export async function tidy(admin: Admin, userId: string, runId: string): Promise
   const notes = await readableNotes(admin, userId);
   const inUse = [...new Set(notes.flatMap((n) => n.tags || []))];
   const own = await ownTags(admin, userId, inUse);
+  // A note with one tag is marked, and listed first, so the plan says where it would go.
+  const alone = notes.filter((n) => (n.tags || []).length === 1);
+  const ref = new Map(alone.map((n, i) => [n.id, `n${i + 1}`]));
   const summaries: TagSummary[] = own.map((tag) => ({
     name: tag.name,
     meaning: tag.meaning,
     parent: tag.parent,
-    notes: notes.filter((n) => (n.tags || []).includes(tag.name)).map((n) => ({ title: n.label, summary: n.analysis?.summary || noteText(n).slice(0, 240) })),
+    notes: notes
+      .filter((n) => (n.tags || []).includes(tag.name))
+      .sort((a, b) => Number(ref.has(b.id)) - Number(ref.has(a.id)))
+      .map((n) => ({ title: n.label, summary: n.analysis?.summary || noteText(n).slice(0, 240), ref: ref.get(n.id) })),
   }));
   const ctx = { userId };
   const subjects = await clientNames(admin, userId);
@@ -322,6 +340,11 @@ export async function tidy(admin: Admin, userId: string, runId: string): Promise
     ...plan.parents.map((p) => ({ ...blank, kind: "parent" as const, tag: p.tag, target: p.parent, source: "tidy" as const })),
     ...plan.added.map((a) => ({ ...blank, kind: "new" as const, tag: a.tag, target: a.parent ?? "", meaning: a.meaning, why: a.why, source: "tidy" as const })),
   ]);
+  const byRef = new Map(plan.moves.map((m) => [m.ref, m.tag]));
+  for (const tag of own) {
+    const moves = Object.fromEntries(alone.filter((n) => n.tags![0] === tag.name).map((n) => [n.id, byRef.get(ref.get(n.id)!) ?? ""]));
+    await admin.from("tag_vocabulary").update({ moves }).eq("user_id", userId).eq("name", tag.name);
+  }
   await finish(admin, userId, runId);
 }
 

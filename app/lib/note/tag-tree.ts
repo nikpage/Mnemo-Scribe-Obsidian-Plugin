@@ -13,6 +13,8 @@ export interface TagRow {
   parent: string | null;
   /** What a note must be about to carry it, in the person's words. */
   meaning?: string | null;
+  /** Each note whose only tag this is, to the tag a tidy-up suggests for it ("" = none). */
+  moves?: Record<string, string>;
 }
 
 /** Each tag to its parent. A loop (saved by two devices at once) is cut where it closes. */

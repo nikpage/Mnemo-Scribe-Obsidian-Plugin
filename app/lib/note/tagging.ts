@@ -224,6 +224,8 @@ export interface Plan {
   retires: { tag: string; why: string }[];
   parents: { tag: string; parent: string }[];
   added: { tag: string; meaning: string; parent: string | null; why: string }[];
+  /** A note whose only tag is one of these, to another existing tag that fits it ("" = none). */
+  moves: { ref: string; tag: string }[];
 }
 
 const PlanReply = z.object({
@@ -232,6 +234,7 @@ const PlanReply = z.object({
   retires: z.array(z.object({ tag: z.unknown(), why: z.unknown() })).catch([]),
   parents: z.array(z.object({ tag: z.unknown(), parent: z.unknown() })).catch([]),
   added: z.array(z.object({ tag: z.unknown(), meaning: z.unknown(), parent: z.unknown(), why: z.unknown() })).catch([]),
+  moves: z.array(z.object({ note: z.unknown(), tag: z.unknown() })).catch([]),
 });
 
 /** A tag as the tidy-up reads it: what it means, where it sits, and what carries it. */
@@ -239,7 +242,8 @@ export interface TagSummary {
   name: string;
   meaning: string | null;
   parent: string | null;
-  notes: { title: string; summary: string }[];
+  /** `ref` marks a note whose only tag this is, so the tidy-up can say where it would go. */
+  notes: { title: string; summary: string; ref?: string }[];
 }
 
 /**
@@ -296,7 +300,17 @@ export function keepPlan(reply: z.infer<typeof PlanReply>, tags: TagSummary[], o
     above.set(tag, parent);
     parents.push({ tag, parent });
   }
-  return { meanings, merges, retires, parents, added };
+
+  // A note's new home is another tag of the person's that stays; one per note.
+  const leaving = new Map(tags.flatMap((t) => t.notes.flatMap((n) => (n.ref ? [[n.ref, t.name] as const] : []))));
+  const moves: Plan["moves"] = [];
+  for (const m of reply.moves) {
+    const ref = String(m.note ?? "").trim();
+    const tag = name(m.tag);
+    if (!leaving.has(ref) || moves.some((n) => n.ref === ref)) continue;
+    moves.push({ ref, tag: names.has(tag) && !gone.has(tag) && tag !== leaving.get(ref) ? tag : "" });
+  }
+  return { meanings, merges, retires, parents, added, moves };
 }
 
 /**
@@ -310,11 +324,11 @@ export async function planTags(
   tags: TagSummary[],
   opts: { lang: Lang; subjects: string[]; asked: Set<string>; ctx: CostContext }
 ): Promise<Plan> {
-  if (tags.length === 0) return { meanings: [], merges: [], retires: [], parents: [], added: [] };
+  if (tags.length === 0) return { meanings: [], merges: [], retires: [], parents: [], added: [], moves: [] };
   const lines = tags.map((t) =>
     [
       `## ${t.name}${t.parent ? ` (under ${t.parent})` : ""}${t.meaning ? ` — means: ${t.meaning}` : " — no meaning yet"}`,
-      ...t.notes.slice(0, 12).map((n) => `- ${n.title}: ${n.summary.slice(0, 240)}`),
+      ...t.notes.slice(0, 12).map((n) => `- ${n.ref ? `[${n.ref}] ` : ""}${n.title}: ${n.summary.slice(0, 240)}`),
       t.notes.length === 0 ? "- (no notes)" : t.notes.length > 12 ? `- …and ${t.notes.length - 12} more` : "",
     ]
       .filter(Boolean)
@@ -333,15 +347,16 @@ Propose:
 - "retires": tags that should not exist — a word for a note's state (draft, published), a leftover folder name, a person's or client's name, something too vague to help (data, projects, misc), or a tag whose notes plainly are not about it. Say why in a few words.
 - "parents": a tree where it helps — a tag under a broader one it is a kind or part of. Only as deep as the notes need; flat is fine.
 - "added": tags that several notes plainly need and no tag covers, each with a meaning, a parent or null, and why.
+- "moves": for every note marked [n…] (that tag is its only one), the other tag listed here that the note is plainly about, or "" when none fits. Only tags already listed.
 Judge the number of tags and the shape of the tree from these notes; different notes need different structures.
 
 Everything in ${LANGUAGE_NAMES[opts.lang]}. Tag names lowercase, one concept, one or two words.
 
-Return JSON only: {"meanings":[{"tag":"…","meaning":"…"}],"merges":[{"tag":"…","into":"…","why":"…"}],"retires":[{"tag":"…","why":"…"}],"parents":[{"tag":"…","parent":"…"}],"added":[{"tag":"…","meaning":"…","parent":null,"why":"…"}]}`,
+Return JSON only: {"meanings":[{"tag":"…","meaning":"…"}],"merges":[{"tag":"…","into":"…","why":"…"}],"retires":[{"tag":"…","why":"…"}],"parents":[{"tag":"…","parent":"…"}],"added":[{"tag":"…","meaning":"…","parent":null,"why":"…"}],"moves":[{"note":"n1","tag":"…"}]}`,
       `\n\n${opts.subjects.length ? `CLIENT NAMES (never tags): ${opts.subjects.join(", ")}\n\n` : ""}TAGS:\n${lines.join("\n\n")}`,
     ],
     json: true,
   });
   const read = readJson(reply, PlanReply);
-  return read ? keepPlan(read, tags, opts) : { meanings: [], merges: [], retires: [], parents: [], added: [] };
+  return read ? keepPlan(read, tags, opts) : { meanings: [], merges: [], retires: [], parents: [], added: [], moves: [] };
 }
