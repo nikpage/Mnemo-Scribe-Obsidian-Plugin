@@ -33,11 +33,10 @@ type Admin = SupabaseClient<any, any, any>;
 export type Spend = "record" | "import" | "reading" | "ask";
 
 /**
- * What a priced press's writing counts as, in tokens read: the model writes a
- * few thousand tokens and thinks before it, both billed as output at five
- * times the input rate. A margin that holds for every prompt priced so.
+ * The least a reading or an Ask takes: it covers the first 20,000 tokens read
+ * and the few thousand the model writes, billed at five times the input rate.
  */
-export const WRITING_TOKENS = 10_000;
+export const READ_MINIMUM = 2;
 
 export class OutOfCredits extends Error {
   constructor() {
@@ -91,8 +90,9 @@ export async function priceOf(admin: Admin, operation: Spend, units: number): Pr
   const { data: rate, error } = await admin.from("credit_rates").select("credits, per").eq("operation", operation).maybeSingle();
   if (error) throw new Error(error.message);
   if (!rate) throw new Error(`No credit rate for ${operation}`);
-  // PRICING.md: a recording pays its rate for every 15 minutes started.
-  if (operation === "record") return units > 0 ? Math.ceil(units / Number(rate.per)) * Number(rate.credits) : 0;
+  // PRICING.md: a recording pays its rate for the first 15 minutes, 1 credit for the second.
+  if (operation === "record") return units > 0 ? Number(rate.credits) + Math.ceil(units / Number(rate.per)) - 1 : 0;
+  if (operation === "reading" || operation === "ask") return Math.max(READ_MINIMUM, creditsFor(rate, units));
   return creditsFor(rate, units);
 }
 
