@@ -283,8 +283,8 @@ export function HomeDashboard({ links = true }: { links?: boolean }) {
           ))}
         </List>
         {links && (
-          <Link href="/recent" data-tip={t("tipHomeAllNotes")} className="mt-2 block text-sm text-muted-foreground hover:underline">
-            {t("homeAllNotes")} →
+          <Link href="/recent" data-tip={t("tipAllNotes")} className="mt-2 block text-sm text-muted-foreground hover:underline">
+            {t("allNotes")} →
           </Link>
         )}
       </section>
