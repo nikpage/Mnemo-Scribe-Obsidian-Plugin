@@ -189,19 +189,6 @@ export function withTags(tags: string[], more: string[]): string[] {
 }
 
 /**
- * The note an address names (`/<title>.md`), if it names one. Notes have no
- * folders now, so an old link into one (`/recipes/kombucha/batch.md`) finds
- * the note by its name. Segments arrive percent-encoded from the browser.
- */
-export function noteAtPath<T extends { path: string | null; status: string }>(rawSegments: string[], notes: T[]): T | undefined {
-  const raw = rawSegments.map(decodeSegment);
-  if (!/\.md$/i.test(raw[raw.length - 1] || "")) return undefined;
-  const here = normalizePath([...raw.slice(0, -1), raw[raw.length - 1].replace(/\.md$/i, "")].join("/"));
-  if (!here) return undefined;
-  return notes.find((n) => n.status === "done" && (normalizePath(n.path || "") === here || n.path === splitPath(here).at(-1)));
-}
-
-/**
  * A note's sentences after the person changed its tags: a tag kept keeps its
  * sentence (or none, on a note filed before sentences), a tag added is the
  * person's — "" — and is never offered for removal.

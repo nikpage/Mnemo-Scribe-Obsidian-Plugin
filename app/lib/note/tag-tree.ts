@@ -63,17 +63,6 @@ export function canParent(tag: string, parent: string | null, parents: Parents):
   return parent === null || !under(tag, parents).has(parent);
 }
 
-/** Whether a note shows on a view of these tags: for each, it carries it or a tag under it. */
-export function carriesUnder(noteTags: string[] | null | undefined, selected: string[], parents: Parents): boolean {
-  return viewOf(selected, parents)(noteTags);
-}
-
-/** `carriesUnder` for many notes: each tag's branch worked out once. */
-export function viewOf(selected: string[], parents: Parents): (noteTags: string[] | null | undefined) => boolean {
-  const branches = selected.map((tag) => under(tag, parents));
-  return (noteTags) => branches.every((branch) => (noteTags || []).some((tag) => branch.has(tag)));
-}
-
 /** The note's tag deepest in the tree; equal depths, the first by name. Null for no tags. */
 export function deepest(tags: string[], parents: Parents): string | null {
   let best: string | null = null;
@@ -93,8 +82,9 @@ export interface TagNode {
 /**
  * The tree the sidebar draws: every tag a note carries, and every tag above
  * one, by name at each level. A tag no note carries, at any depth, is left out.
+ * `n`: how many notes carry exactly those tags (`noteCounts()`), one when absent.
  */
-export function tagTree(rows: TagRow[], notes: { tags: string[] | null }[]): TagNode[] {
+export function tagTree(rows: TagRow[], notes: { tags: string[] | null; n?: number }[]): TagNode[] {
   const parents = parentsOf(rows);
   const used = new Set(notes.flatMap((note) => note.tags || []));
   const shown = new Set<string>();
@@ -108,7 +98,7 @@ export function tagTree(rows: TagRow[], notes: { tags: string[] | null }[]): Tag
         const branch = under(name, parents);
         return {
           name,
-          count: notes.filter((note) => (note.tags || []).some((tag) => branch.has(tag))).length,
+          count: notes.filter((note) => (note.tags || []).some((tag) => branch.has(tag))).reduce((sum, note) => sum + (note.n ?? 1), 0),
           children: build(name),
         };
       });

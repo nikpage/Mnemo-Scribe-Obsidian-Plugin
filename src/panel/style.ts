@@ -124,6 +124,7 @@ ${R} .flex { display: flex; }
 ${R} .flex-1 { flex: 1 1 0%; }
 ${R} .flex-wrap { flex-wrap: wrap; }
 ${R} .items-center { align-items: center; }
+${R} .justify-center { justify-content: center; }
 ${R} .items-start { align-items: flex-start; }
 ${R} .shrink-0 { flex-shrink: 0; }
 ${R} .pb-3 { padding-bottom: 12px; }

@@ -6,7 +6,9 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useLang } from "@/hooks/use-lang";
 import { factMeta } from "@/lib/note/fact-line";
-import { useNotes } from "@/components/app-shell";
+import { useCounts } from "@/hooks/use-notes-page";
+import { tagsByUse } from "@/lib/note/notes-page";
+import { ShowMore } from "@/components/note-pages";
 import { searchParams, useSearch } from "@/hooks/use-search";
 import { api, useApi } from "@/lib/api";
 import type { FactHit } from "@/lib/note/fact-line";
@@ -43,8 +45,8 @@ export function SearchPane() {
   // the sidebar — and a tag view's "Search these notes" narrows it by `tags`.
   const asked = params.get("q") || "";
   const within = normalizeTags((params.get("tags") || "").split(","));
-  const { query, setQuery, setFilters, results, searching, active, runFuzzy, fuzzying, fuzzy } = useSearch();
-  const { recordings } = useNotes();
+  const { query, setQuery, setFilters, results, searching, active, runFuzzy, fuzzying, fuzzy, more, showMore } = useSearch();
+  const counts = useCounts().data;
 
   const [showFilters, setShowFilters] = useState(within.length > 0);
   const [tagFilters, setTagFilters] = useState<string[]>(within);
@@ -97,17 +99,9 @@ export function SearchPane() {
   const [answeredFor, setAnsweredFor] = useState("");
 
   // The tags on offer are the ones the store actually uses, most used first.
-  const tagCounts = new Map<string, number>();
-  for (const note of recordings) {
-    if (note.status !== "done") continue;
-    for (const tag of note.tags || []) tagCounts.set(tag, (tagCounts.get(tag) || 0) + 1);
-  }
-  const tags = [...tagCounts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).slice(0, 30);
+  const tags = tagsByUse(counts?.sets ?? []);
 
-  const pinned = recordings
-    .filter((n) => n.pinned && n.status === "done")
-    .sort((a, b) => (a.recorded_at < b.recorded_at ? 1 : -1))
-    .map((n) => ({ id: n.id, path: n.path, label: noteName(n.path, n.label) }));
+  const pinned = (counts?.pinned ?? []).map((n) => ({ id: n.id, path: n.path, label: noteName(n.path, n.label) }));
 
   // The written answer carries the same filters as the search it is asked
   // of, and finds its notes by meaning as well — it is already a billed press.
@@ -167,7 +161,7 @@ export function SearchPane() {
 
       {showFilters && tags.length > 0 && (
         <div className="mb-4 flex flex-wrap gap-1">
-          {tags.map(([tag]) => (
+          {tags.map((tag) => (
             <Chip
               key={tag}
               on={tagFilters.includes(tag)}
@@ -225,16 +219,19 @@ export function SearchPane() {
           {fuzzy && results && results.length > 0 && (
             <div className="mb-2 text-xs uppercase tracking-wide text-primary">{t("fuzzyDone")}</div>
           )}
-          {results === null || searching || fuzzying ? (
-            <div className="text-muted-foreground">{fuzzying ? t("fuzzying") : t("loading")}</div>
-          ) : results.length === 0 ? (
+          {fuzzying ? (
+            <div className="text-muted-foreground">{t("fuzzying")}</div>
+          ) : results === null || searching ? null : results.length === 0 ? (
             <div className="py-8 text-center text-muted-foreground">{t("searchNoResults")}</div>
           ) : (
-            <List>
-              {results.map((result) => (
-                <NoteRow key={result.note.id} note={result.note} excerpt={result.excerpt} />
-              ))}
-            </List>
+            <>
+              <List>
+                {results.map((result) => (
+                  <NoteRow key={result.note.id} note={result.note} excerpt={result.excerpt} />
+                ))}
+              </List>
+              {more && !fuzzy && <ShowMore onMore={showMore} />}
+            </>
           )}
 
           {/* The two paid ways further, after the free answer has been seen. */}

@@ -3,13 +3,13 @@
 import { useState } from "react";
 import { createRoot } from "react-dom/client";
 import { SWRConfig } from "swr";
-import { useApi } from "@/lib/api";
+import { useCounts } from "@/hooks/use-notes-page";
 import { SearchProvider } from "@/hooks/use-search";
 import { BrainOf } from "@/components/what-next";
 import { SearchPane } from "@/components/panes/search";
 import { NoteAbout } from "@/components/note-about";
 import { HomeDashboard } from "@/components/home-dashboard";
-import { type ListNote, ShellContext } from "./shell";
+import { ShellContext } from "./shell";
 
 /**
  * The app's own screens in the panel: Home is the app's home dashboard, Brain its Brain panel, Search
@@ -37,24 +37,21 @@ export function forgetScreens() {
 }
 
 function Screens({ screen, host }: { screen: Screen; host: ScreenHost }) {
-  const { data } = useApi<{ recordings: ListNote[] }>("/api/recordings");
+  // The tags in use and the pinned notes, asked first as the app's shell does.
+  const counts = useCounts();
   const [problem, setProblem] = useState<string | null>(null);
-  // A screen draws once, whole: nothing until the notes are here.
-  if (!data) return null;
-  // As in the app: the lists hold the notes in use; search sees every shelf
-  // and keeps to the one asked for.
-  const all = data.recordings;
-  const notes = all.filter((note) => (note.shelf ?? "normal") === "normal");
+  // A screen draws once, whole: nothing until the numbers are here.
+  if (!counts.data) return null;
   const open = (id: string) => void host.open(id).then(setProblem);
   return (
-    <ShellContext.Provider value={{ recordings: notes, open }}>
+    <ShellContext.Provider value={{ open }}>
       {problem && <p className="scribe-error">{problem}</p>}
       {screen === "home" ? (
         <HomeDashboard links={false} />
       ) : screen === "brain" ? (
-        <BrainOf key={host.noteId ?? ""} notes={notes} centreId={host.noteId ?? undefined} />
+        <BrainOf key={host.noteId ?? ""} centreId={host.noteId ?? undefined} />
       ) : screen === "search" ? (
-        <SearchProvider notes={all}>
+        <SearchProvider>
           <SearchPane />
         </SearchProvider>
       ) : (

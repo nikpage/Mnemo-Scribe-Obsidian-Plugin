@@ -2,7 +2,9 @@
 
 // [Guru]
 import { useMemo, useState } from "react";
-import { ApiError, send, useApi } from "@/lib/api";
+import { ApiError, allAnswered, send, useApi } from "@/lib/api";
+import { useCounts } from "@/hooks/use-notes-page";
+import { tagsByUse } from "@/lib/note/notes-page";
 import { busyUntilDone } from "@/lib/busy";
 import { useLang } from "@/hooks/use-lang";
 import { formatDate, formatFactDate, formatUsd } from "@/lib/format";
@@ -231,29 +233,18 @@ export function WhatNext({ scope, target = "" }: { scope: "overview" | "tags" | 
   );
 }
 
-/** A note as the Brain reads the notes list: enough to offer its tags and name it. */
-type ListedNote = { id: string; path: string; status: string; tags: string[] | null };
-
 /**
- * The Brain for these notes: the store's tags on offer, most used first, and
- * centred on `centreId` when a note is open. The app's Brain panel and the
- * plugins' Brain tab are both this.
+ * The Brain for the store: its tags on offer, most used first, and centred
+ * on `centreId` when a note is open. The app's Brain panel and the plugins'
+ * Brain tab are both this. Drawn once both are in.
  */
-export function BrainOf({ notes, within, centreId }: { notes: ListedNote[]; within?: string[]; centreId?: string }) {
-  const titles = useMemo(() => new Map(notes.map((n) => [n.id, n.path])), [notes]);
-  const tags = useMemo(() => {
-    const counts = new Map<string, number>();
-    for (const n of notes) {
-      if (n.status !== "done") continue;
-      for (const tag of n.tags || []) counts.set(tag, (counts.get(tag) || 0) + 1);
-    }
-    return [...counts.entries()]
-      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-      .slice(0, 30)
-      .map(([tag]) => tag);
-  }, [notes]);
-  const here = centreId ? notes.find((n) => n.id === centreId) : undefined;
-  return <BrainReading tags={tags} within={within} centre={here ? { id: here.id, title: here.path } : undefined} titles={titles} />;
+export function BrainOf({ within, centreId }: { within?: string[]; centreId?: string }) {
+  const counts = useCounts();
+  const centre = useApi<{ recordings: { id: string; path: string }[] }>(centreId ? `/api/recordings?ids=${centreId}` : null);
+  const tags = useMemo(() => tagsByUse(counts.data?.sets ?? []), [counts.data]);
+  if (!allAnswered(counts, centreId ? centre : { data: null })) return null;
+  const here = centre.data?.recordings[0];
+  return <BrainReading tags={tags} within={within} centre={here ? { id: here.id, title: here.path } : undefined} />;
 }
 
 /**
@@ -268,13 +259,10 @@ export function BrainReading({
   tags,
   within = [],
   centre,
-  titles,
 }: {
   tags: string[];
   within?: string[];
   centre?: { id: string; title: string };
-  /** Each note's title by id, to name an earlier reading of one note. */
-  titles: Map<string, string>;
 }) {
   const { lang, t } = useLang();
   const [job, setJob] = useState<Kind>("picture");
@@ -287,7 +275,8 @@ export function BrainReading({
 
   const reading = useReading(asked?.scope ?? "overview", asked?.target ?? "", asked !== null);
   const { data: suggested } = useApi<{ suggestions: Suggestion[] }>("/api/notes/what-next/suggest");
-  const { data: earlier } = useApi<{ readings: { id: string; scope: Scope; target: string; created_at: string }[] }>("/api/notes/what-next?history=1");
+  // A reading of one note comes with that note's title.
+  const { data: earlier } = useApi<{ readings: { id: string; scope: Scope; target: string; created_at: string; title?: string }[] }>("/api/notes/what-next?history=1");
   const choice = { kind: job, topics, narrow };
   const wanted = readingOf(choice, centre?.title);
   // Priced on stand-in words: the wording never changes the price, so typing asks nothing.
@@ -323,12 +312,12 @@ export function BrainReading({
   }
 
   /** What a reading was of, in a line: what was wanted, and of which notes. */
-  function labelOf(scope: Scope, target: string): string {
+  function labelOf(scope: Scope, target: string, title = target === centre?.id ? centre.title : ""): string {
     if (scope === "subject") {
       const of = subjectOf(target);
       return of ? `${t(JOB_LABEL[of.kind])}: ${of.subject === EVERYTHING ? t("brainEverything") : of.subject}` : "";
     }
-    const which = scope === "overview" ? t("brainEverything") : scope === "tags" ? target.split(",").map((tag) => `#${tag}`).join(" ") : scope === "item" ? (titles.get(target) ?? "") : "";
+    const which = scope === "overview" ? t("brainEverything") : scope === "tags" ? target.split(",").map((tag) => `#${tag}`).join(" ") : scope === "item" ? title : "";
     return which ? `${t("jobPicture")}: ${which}` : t("jobPicture");
   }
 
@@ -463,7 +452,7 @@ export function BrainReading({
             {earlier!.readings.map((r) => (
               <li key={r.id}>
                 <Button variant="link" size="sm" className="text-left" tip={t("tipBrainEarlier")} onClick={() => setAsked({ scope: r.scope, target: r.target })}>
-                  {labelOf(r.scope, r.target)} · {formatDate(r.created_at, lang)}
+                  {labelOf(r.scope, r.target, r.title)} · {formatDate(r.created_at, lang)}
                 </Button>
               </li>
             ))}

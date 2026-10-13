@@ -46,10 +46,11 @@ export function NoteLink({
       {...rest}
       href={to}
       data-tip={tip}
-      onMouseEnter={() => preloadNote(note.id)}
-      onTouchStart={() => preloadNote(note.id)}
+      onMouseEnter={() => preloadNote(note.id, note.path)}
+      onTouchStart={() => preloadNote(note.id, note.path)}
       onClick={(e) => {
         rest.onClick?.(e);
+        preloadNote(note.id, note.path);
         // Anywhere but the notes page (Tags, Insights, a pane) nothing reads the address: navigate.
         if (!own || notesPages === 0 || e.defaultPrevented || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
         e.preventDefault();

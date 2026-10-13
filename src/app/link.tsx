@@ -1,16 +1,25 @@
 // [utils]
 
-import { noteHref } from "@/lib/note/filing";
+import { api } from "@/lib/api";
+import { noteAddress, noteAtUrl } from "@/lib/note/notes-page";
 import { useNotes } from "./shell";
 
 /**
  * `next/link` as the plugins run the app's screens: a link to a note opens
  * that note in this app. The app links a note by its path (`noteHref()`) or
- * as `/transcript/<id>`; both are turned back into the note's id here.
+ * as `/transcript/<id>`; a path is asked of the server, as the app's notes
+ * page asks it, and opens the note it names.
  */
 export default function Link({ href, className, children, ...rest }: React.AnchorHTMLAttributes<HTMLAnchorElement> & { href: string; "data-tip"?: string }) {
-  const { recordings, open } = useNotes();
-  const id = /^\/transcript\/([^/?#]+)/.exec(href)?.[1] ?? recordings.find((n) => noteHref(n.path, n.id) === href)?.id;
+  const { open } = useNotes();
+  async function idOf(): Promise<string | null> {
+    const id = /^\/transcript\/([^/?#]+)/.exec(href)?.[1];
+    if (id) return id;
+    const address = noteAddress(href.split(/[?#]/)[0].split("/").filter(Boolean));
+    if (!address) return null;
+    const found = await api<{ recording: { id: string } | null }>(noteAtUrl(address)).catch(() => null);
+    return found?.recording?.id ?? null;
+  }
   return (
     <a
       href="#"
@@ -18,7 +27,7 @@ export default function Link({ href, className, children, ...rest }: React.Ancho
       data-tip={rest["data-tip"]}
       onClick={(event) => {
         event.preventDefault();
-        if (id) open(id);
+        void idOf().then((id) => id && open(id));
       }}
     >
       {children}
