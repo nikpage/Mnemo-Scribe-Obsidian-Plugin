@@ -217,7 +217,9 @@ const KEY: { look: Line["look"]; text: "webKeyKept" | "webKeyAsked" | "webKeyBri
 export function WebView() {
   const { t, lang } = useLang();
   const [centre, setCentre] = useState<string | null>(null);
-  const [engine, setEngine] = useState<Graph | null>(null);
+  // Boxed: a graph is itself a function, and React would call it as an updater.
+  const [box, setBox] = useState<{ graph: Graph } | null>(null);
+  const engine = box?.graph ?? null;
   const [sel, setSel] = useState<{ of: unknown; why: Why } | null>(null);
   const whole = useApi<Web>("/api/notes/web");
   // The tag last opened stays drawn until the next one has answered.
@@ -482,7 +484,7 @@ export function WebView() {
       graph.d3Force("collide", forceCollide<GNode>((n) => n.dot.r + 16) as never);
       graph.d3Force("x", forceX<GNode>(0).strength(0.05) as never);
       graph.d3Force("y", forceY<GNode>(0).strength(0.05) as never);
-      setEngine(graph);
+      setBox({ graph });
     });
 
     return () => {
@@ -491,7 +493,7 @@ export function WebView() {
       g?._destructor();
       el.replaceChildren();
       live.current = null;
-      setEngine(null);
+      setBox(null);
     };
   }, [stageOn]); // eslint-disable-line react-hooks/exhaustive-deps -- `t` is kept fresh below; the canvas is made once
 
