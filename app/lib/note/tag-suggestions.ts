@@ -126,6 +126,24 @@ export async function noteQuestions(admin: Admin, userId: string, noteId: string
   }));
 }
 
+/**
+ * The tag each thread through the store offers its notes, asked about at once
+ * like a tidy-up's. A tag the person already has, skipped, or may not hold is
+ * not offered; nothing goes on a note until they keep it.
+ */
+export async function proposeThemeTags(admin: Admin, userId: string, themes: { evidence: string[]; tag?: { name: string; meaning: string } }[]): Promise<void> {
+  const subjects = await clientNames(admin, userId);
+  const own = new Set((await loadTagRows(admin, userId)).map((r) => r.name));
+  const skipped = await skippedNames(admin, userId);
+  for (const theme of themes) {
+    const tag = normalizeSegment(theme.tag?.name ?? "");
+    if (!tag || own.has(tag) || skipped.has(tag) || barred(tag, subjects)) continue;
+    for (const noteId of theme.evidence) {
+      await proposeTags(admin, userId, noteId, [{ tag, meaning: theme.tag!.meaning, parent: null, why: "" }], "tidy");
+    }
+  }
+}
+
 /** The names the person's clients go by: never tags. */
 export async function clientNames(admin: Admin, userId: string): Promise<string[]> {
   return (await loadSubjects(admin, userId)).flatMap((s) => [s.name, ...s.aliases]);
