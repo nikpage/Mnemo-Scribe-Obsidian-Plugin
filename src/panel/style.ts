@@ -121,6 +121,8 @@ const LAYOUT = String.raw`
 ${R} .mt-3 { margin-top: 12px; }
 ${R} .block { display: block; }
 ${R} .flex { display: flex; }
+${R} .inline-flex { display: inline-flex; }
+${R} .overflow-hidden { overflow: hidden; }
 ${R} .flex-1 { flex: 1 1 0%; }
 ${R} .flex-wrap { flex-wrap: wrap; }
 ${R} .items-center { align-items: center; }
