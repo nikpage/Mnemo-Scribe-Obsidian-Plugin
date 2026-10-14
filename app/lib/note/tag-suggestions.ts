@@ -8,8 +8,8 @@ import { primaryLanguage } from "@/lib/note/language";
 import { READ } from "@/lib/note/shelf";
 import { loadSubjects } from "@/lib/note/subjects";
 import { canParent, parentsOf } from "@/lib/note/tag-tree";
-import { type Earned, type OwnTag, type Proposal, type TagSummary, barred, checkNotes, planTags, tagNote } from "@/lib/note/tagging";
-import { applyVocabulary, loadTagRows, loadVocabulary, rememberTags } from "@/lib/note/vocabulary";
+import { type Earned, type OwnTag, type Proposal, type TagSummary, barred, checkNotes, planTags, quoted, tagNote } from "@/lib/note/tagging";
+import { applyVocabulary, joinKnown, loadTagRows, loadVocabulary, rememberTags } from "@/lib/note/vocabulary";
 
 /**
  * Everything the app asks before it changes a tag, and what happens when the
@@ -392,6 +392,7 @@ export async function tidy(admin: Admin, userId: string, runId: string): Promise
     await admin.from("tag_vocabulary").update({ meaning: m.meaning, updated_at: new Date().toISOString() }).eq("user_id", userId).eq("name", m.tag).is("meaning", null);
   }
   const thin = summaries.filter((t) => t.notes.length < 2 && !plan.merges.some((m) => m.tag === t.name));
+  await closeStale(admin, userId, notes, own, subjects, new Set(thin.map((t) => t.name)));
   await ask(admin, userId, [
     ...thin.map((t) => ({ ...blank, kind: "retire" as const, tag: t.name, why: t.notes.length ? "one note" : "no notes", source: "tidy" as const })),
     ...plan.merges.map((m) => ({ ...blank, kind: "merge" as const, tag: m.tag, target: m.into, why: m.why, source: "tidy" as const })),
@@ -404,6 +405,45 @@ export async function tidy(admin: Admin, userId: string, runId: string): Promise
     await admin.from("tag_vocabulary").update({ moves }).eq("user_id", userId).eq("name", tag.name);
   }
   await finish(admin, userId, runId);
+}
+
+/**
+ * Open questions a tidy-up would no longer ask, closed: a retirement for a
+ * tag now on two notes or more, and a new tag the filing rules now bar — one
+ * the person has in any spelling, one nobody may hold, one without a meaning,
+ * or one no readable note still quotes. A tag the person said or a folder
+ * gave (`spoken`, `folder`) is theirs, never closed here.
+ */
+async function closeStale(
+  admin: Admin,
+  userId: string,
+  notes: Awaited<ReturnType<typeof readableNotes>>,
+  own: { name: string }[],
+  subjects: string[],
+  thin: Set<string>
+): Promise<void> {
+  const { data } = await admin
+    .from("tag_suggestions")
+    .select("id, kind, tag, meaning, notes, source")
+    .eq("user_id", userId)
+    .eq("state", "open")
+    .in("kind", ["retire", "new"]);
+  const names = new Set(own.map((t) => singular(t.name)));
+  const text = new Map(notes.map((n) => [n.id, noteText(n)]));
+  const stands = (s: Pick<Suggestion, "source" | "notes">) =>
+    s.notes.some((n) => text.has(n.id) && ((s.source === "tidy" && !n.why) || quoted(n.why, text.get(n.id)!)));
+  const stale = ((data || []) as Pick<Suggestion, "id" | "kind" | "tag" | "meaning" | "notes" | "source">[]).filter((s) =>
+    s.kind === "retire"
+      ? !thin.has(s.tag)
+      : (s.source === "model" || s.source === "tidy") &&
+        (names.has(singular(s.tag)) || barred(s.tag, subjects) || !s.meaning?.trim() || !stands(s))
+  );
+  if (stale.length === 0) return;
+  await admin
+    .from("tag_suggestions")
+    .update({ state: "skipped", decided_at: new Date().toISOString() })
+    .eq("user_id", userId)
+    .in("id", stale.map((s) => s.id));
 }
 
 /**
@@ -586,7 +626,8 @@ export async function tagsInUse(admin: Admin, userId: string): Promise<string[]>
  */
 export async function givenTags(admin: Admin, userId: string, noteId: string, words: string[], source: "spoken" | "folder"): Promise<string[]> {
   const subjects = await clientNames(admin, userId);
-  const clean = applyVocabulary(await loadVocabulary(admin, userId), normalizeTags(words)).filter((tag) => !barred(tag, subjects));
+  const vocabulary = await loadVocabulary(admin, userId);
+  const clean = applyVocabulary(vocabulary, joinKnown(vocabulary, normalizeTags(words))).filter((tag) => !barred(tag, subjects));
   if (clean.length === 0) return [];
   const own = new Set((await ownTags(admin, userId, await tagsInUse(admin, userId))).map((tag) => tag.name));
   const skipped = await skippedNames(admin, userId);

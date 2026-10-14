@@ -62,6 +62,27 @@ export async function loadVocabulary(
 }
 
 /** What a set of tags becomes once the vocabulary has had its say. */
+/**
+ * Words said one after another that together spell a tag the person has
+ * ("one", "human", "tribe" → `one-human-tribe`), joined back into it, longest
+ * run first. Words that spell nothing known stay as they came.
+ */
+export function joinKnown(vocabulary: Vocabulary, words: string[]): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < words.length; ) {
+    let end = i + 1;
+    for (let j = words.length; j > i + 1; j--) {
+      if (vocabulary.resolve.has(words.slice(i, j).join("-"))) {
+        end = j;
+        break;
+      }
+    }
+    out.push(words.slice(i, end).join("-"));
+    i = end;
+  }
+  return out;
+}
+
 export function applyVocabulary(vocabulary: Vocabulary, tags: string[]): string[] {
   return normalizeTags(tags.map((tag) => vocabulary.resolve.get(tag) || tag));
 }
