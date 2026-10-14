@@ -10,7 +10,6 @@ import { noteName } from "@/lib/note/filing";
 import { formatDuration } from "@/lib/format";
 import { Document } from "yaml";
 import type { Shelf } from "@/lib/note/shelf";
-import { type Parents, nestedTag } from "@/lib/note/tag-tree";
 
 export type NoteAnalysis = {
   summary?: string;
@@ -27,7 +26,7 @@ export type NoteSource = {
    * UI nudges; nothing here rejects a deeper path.
    */
   path?: string;
-  /** Labels as written, a tag under another nested: `food/recipe`. Any number; the UI nudges toward few. */
+  /** Labels as written, plain: `recipe`. Any number; the UI nudges toward few. */
   tags?: string[];
   recordedAt: string;
   durationSeconds?: number | null;
@@ -74,15 +73,15 @@ export type NoteRow = {
 /**
  * A row as the document's source. The one mapping every destination uses:
  * the export once made its own and left the body out, so every imported or
- * vault-edited note exported empty. A tag under another is written nested,
- * `food/recipe`, as Obsidian reads it; the note itself carries only `recipe`.
+ * vault-edited note exported empty. Tags are written plain: which tags sit
+ * under which lives only in the app's own views, never in another app.
  */
-export function noteSource(row: NoteRow, author?: string, parents: Parents = new Map()): NoteSource {
+export function noteSource(row: NoteRow, author?: string): NoteSource {
   return {
     id: row.id,
     title: noteName(row.path || "", row.label || ""),
     path: row.path || "",
-    tags: (row.tags || []).map((tag) => nestedTag(tag, parents)),
+    tags: row.tags || [],
     recordedAt: row.recorded_at,
     durationSeconds: row.duration_seconds,
     transcript: (row.transcript?.utterances || []).map((u) => u.text).join("\n"),

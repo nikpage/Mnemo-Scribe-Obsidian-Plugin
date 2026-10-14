@@ -5,6 +5,7 @@ import { generate, readJson } from "@/lib/ai/call";
 import type { CostContext } from "@/lib/ai/cost";
 import { type Lang, LANGUAGE_NAMES } from "@/lib/i18n";
 import { normalizeSegment, singular } from "@/lib/note/filing";
+import { canParent, parentsOf } from "@/lib/note/tag-tree";
 
 /**
  * Tags the person owns. Every tag has a meaning they approved; filing puts a
@@ -252,7 +253,8 @@ const PlanReply = z.object({
 export interface TagSummary {
   name: string;
   meaning: string | null;
-  parent: string | null;
+  /** Every tag it sits under now. */
+  parents: string[];
   /** `ref` marks a note whose only tag this is, so the tidy-up can say where it would go. */
   notes: { title: string; summary: string; ref?: string }[];
 }
@@ -260,7 +262,7 @@ export interface TagSummary {
 /**
  * The plan, checked: only tags that exist are given meanings (only those
  * without one), merged or moved; a merge goes into a tag that stays; a
- * parent never makes a loop and is never a word of the tag's own name; a new
+ * parent (a tag may get several) never makes a loop and is never a word of the tag's own name; a new
  * top-level tag is not barred, not one the person already skipped, and
  * gathers at least two top-level tags.
  */
@@ -287,19 +289,14 @@ export function keepPlan(reply: z.infer<typeof PlanReply>, tags: TagSummary[], o
     .map((m) => ({ tag: name(m.tag), meaning: words(m.meaning) }))
     .filter((m, i, all) => living.has(m.tag) && m.meaning && !tags.find((t) => t.name === m.tag)?.meaning && all.findIndex((n) => n.tag === m.tag) === i);
 
-  // Parents among the tags that remain, applied in order and dropped where one would close a loop.
-  const above = new Map<string, string>(tags.filter((t) => t.parent && living.has(t.parent)).map((t) => [t.name, t.parent!]));
-  const loops = (tag: string, parent: string) => {
-    for (let at: string | undefined = parent; at; at = above.get(at)) if (at === tag) return true;
-    return false;
-  };
+  // Parents among the tags that remain, several to a tag, applied in order and dropped where one would close a loop.
+  const above = parentsOf(tags.map((t) => ({ name: t.name, parents: t.parents.filter((p) => living.has(p)) })));
   const parents: Plan["parents"] = [];
   for (const p of reply.parents) {
     const tag = name(p.tag);
     const parent = name(p.parent);
-    if (!living.has(tag) || !living.has(parent) || tag === parent || above.get(tag) === parent || loops(tag, parent) || ownWord(tag, parent)) continue;
-    if (parents.some((q) => q.tag === tag)) continue;
-    above.set(tag, parent);
+    if (!living.has(tag) || !living.has(parent) || tag === parent || above.get(tag)?.has(parent) || !canParent(tag, parent, above) || ownWord(tag, parent)) continue;
+    above.set(tag, new Set([...(above.get(tag) ?? []), parent]));
     parents.push({ tag, parent });
   }
 
@@ -342,7 +339,7 @@ export async function planTags(
   if (tags.length === 0) return { meanings: [], merges: [], parents: [], groups: [], moves: [] };
   const lines = tags.map((t) =>
     [
-      `## ${t.name}${t.parent ? ` (under ${t.parent})` : ""}${t.meaning ? ` — means: ${t.meaning}` : " — no meaning yet"}`,
+      `## ${t.name}${t.parents.length ? ` (under ${t.parents.join(", ")})` : ""}${t.meaning ? ` — means: ${t.meaning}` : " — no meaning yet"}`,
       ...t.notes.slice(0, 12).map((n) => `- ${n.ref ? `[${n.ref}] ` : ""}${n.title}: ${n.summary.slice(0, 240)}`),
       t.notes.length === 0 ? "- (no notes)" : t.notes.length > 12 ? `- …and ${t.notes.length - 12} more` : "",
     ]
@@ -359,7 +356,7 @@ export async function planTags(
 Propose:
 - "meanings": a one-line meaning for every tag that has none — what a note must be about to carry it, judged from its notes.
 - "merges": tags that mean the same thing, or are spellings of one ("into" is the one that stays).
-- "parents": a tree where it helps — a tag under an existing broader tag naming the field it belongs to: "money" as society studies it under "sociology", the person's own money ("my-money") under "budgeting". Never a parent made of a word of the tag's own name ("money" over "my-money"). Only as deep as the notes need; flat is fine.
+- "parents": a web where it helps — a tag under an existing broader tag naming the field it belongs to, under several when it belongs to several ("israel-palestine-war" under "war", "israel" and "palestine"), one entry each: "money" as society studies it under "sociology", the person's own money ("my-money") under "budgeting". Never a parent made of a word of the tag's own name ("money" over "my-money"). Only as deep as the notes need; flat is fine.
 - "groups": new top-level tags, each gathering two or more of the tags listed with no parent, that belong to one field none of the listed tags names: the new tag (one concept, one or two words), its one-line meaning, the tags it gathers, and why. Never a word of a gathered tag's own name.
 - "moves": for every note marked [n…] (that tag is its only one), the other tag listed here that the note is plainly about, or "" when none fits. Only tags already listed.
 Judge the number of tags and the shape of the tree from these notes; different notes need different structures.

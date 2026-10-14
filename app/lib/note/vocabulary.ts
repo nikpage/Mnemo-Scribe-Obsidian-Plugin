@@ -121,30 +121,40 @@ export async function rememberTags(
   }
 }
 
-/** Every tag with its parent and meaning: the tree as stored. */
+/** Every tag with its parents and meaning: the tree as stored. */
 export async function loadTagRows(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   admin: SupabaseClient<any, any, any>,
   userId: string
 ): Promise<TagRow[]> {
-  const { data } = await admin
-    .from("tag_vocabulary")
-    .select("name, parent, meaning")
-    .eq("user_id", userId);
-  return (data || []).map((row: { name: string; parent: string | null; meaning: string | null }) => ({
-    name: row.name,
-    parent: row.parent ?? null,
-    meaning: row.meaning ?? null,
-  }));
+  const [{ data }, { data: links }] = await Promise.all([
+    admin.from("tag_vocabulary").select("name, meaning").eq("user_id", userId),
+    admin.from("tag_parents").select("tag, parent").eq("user_id", userId),
+  ]);
+  const rows = withParents(Array.isArray(data) ? data : [], links);
+  // A parent row for a tag the vocabulary lacks still counts.
+  const named = new Set(rows.map((row) => row.name));
+  const missing = [...new Set((Array.isArray(links) ? links : []).map((l: { tag?: unknown }) => l.tag))].filter((tag): tag is string => typeof tag === "string" && !named.has(tag));
+  return [...rows, ...withParents(missing.map((name) => ({ name, meaning: null })), links)];
+}
+
+/** Vocabulary rows, each with the tags it sits under from `tag_parents` rows. */
+export function withParents<T extends { name: string; meaning?: string | null }>(rows: T[], links: unknown): (T & TagRow)[] {
+  const above = new Map<string, string[]>();
+  for (const link of Array.isArray(links) ? (links as { tag?: unknown; parent?: unknown }[]) : []) {
+    if (typeof link.tag !== "string" || typeof link.parent !== "string") continue;
+    above.set(link.tag, [...(above.get(link.tag) ?? []), link.parent]);
+  }
+  return rows.map((row) => ({ ...row, meaning: row.meaning ?? null, parents: above.get(row.name) ?? [] }));
 }
 
 /**
- * Parents the person set in another app — a vault's `food/recipe` — as
- * `[child, parent]`. The same act as moving a tag in the sidebar, so it
- * replaces any parent before. A pair that would put a
- * tag under itself is dropped. Never throws: the note is saved either way.
+ * Puts tags under more tags, as `[child, parent]`: the person dragging in the
+ * sidebar, keeping a suggestion, or a vault's `food/recipe`. Adds, never
+ * removes another parent. A pair that would put a tag under itself or a tag
+ * beneath it is dropped. Never throws: the note is saved either way.
  */
-export async function setParents(
+export async function addParents(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   admin: SupabaseClient<any, any, any>,
   userId: string,
@@ -154,16 +164,25 @@ export async function setParents(
   try {
     await rememberTags(admin, userId, pairs.flat(), true);
     const parents = parentsOf(await loadTagRows(admin, userId));
+    const adding: { user_id: string; tag: string; parent: string }[] = [];
     for (const [child, parent] of pairs) {
-      if (parents.get(child) === parent || !canParent(child, parent, parents)) continue;
-      await admin
-        .from("tag_vocabulary")
-        .update({ parent, updated_at: new Date().toISOString() })
-        .eq("user_id", userId)
-        .eq("name", child);
-      parents.set(child, parent);
+      if (parents.get(child)?.has(parent) || !canParent(child, parent, parents)) continue;
+      adding.push({ user_id: userId, tag: child, parent });
+      parents.set(child, new Set([...(parents.get(child) ?? []), parent]));
     }
+    if (adding.length) await admin.from("tag_parents").upsert(adding, { onConflict: "user_id,tag,parent", ignoreDuplicates: true });
   } catch (err) {
     console.error("Tag parents not saved (non-fatal):", err);
   }
+}
+
+/** Takes `tag` out from under `parent`; its other parents stay. */
+export async function removeParent(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  admin: SupabaseClient<any, any, any>,
+  userId: string,
+  tag: string,
+  parent: string
+) {
+  return admin.from("tag_parents").delete().eq("user_id", userId).eq("tag", tag).eq("parent", parent);
 }

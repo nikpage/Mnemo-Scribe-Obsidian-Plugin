@@ -1,43 +1,48 @@
 // [Librarian, Filer]
 
 /**
- * Tags under tags, as Bear has them. A note keeps flat tags; each tag may sit
- * under one other tag, and opening a tag shows the notes carrying it or any
- * tag under it. Only the user puts a tag under another — the model may
- * suggest one (`tag-suggestions.ts`), never set it. Pure, so the sidebar, the notes page, search
- * and the vault all read the tree the same way.
+ * Tags under tags. A note keeps flat tags; each tag may sit under any number
+ * of other tags ("Israel-Palestine war" under war, Israel and Palestine), and
+ * opening a tag shows the notes carrying it or any tag beneath it, by any
+ * route. Only the user puts a tag under another — the model may suggest one
+ * (`tag-suggestions.ts`), never set it. Pure, so the sidebar, the notes page,
+ * search and the Brain read the tree the same way. Other apps get flat tags.
  */
 
 export interface TagRow {
   name: string;
-  parent: string | null;
+  /** Every tag it sits under (`tag_parents`), by name. */
+  parents: string[];
   /** What a note must be about to carry it, in the person's words. */
   meaning?: string | null;
   /** Each note whose only tag this is, to the tag a tidy-up suggests for it ("" = none). */
   moves?: Record<string, string>;
 }
 
-/** Each tag to its parent. A loop (saved by two devices at once) is cut where it closes. */
-export type Parents = Map<string, string>;
+/** Each tag to the tags it sits under. A loop (saved by two devices at once) is cut where it closes. */
+export type Parents = Map<string, Set<string>>;
 
 export function parentsOf(rows: TagRow[]): Parents {
   const parents: Parents = new Map();
-  for (const row of rows) {
-    if (row.parent && row.parent !== row.name && !under(row.name, parents).has(row.parent)) {
-      parents.set(row.name, row.parent);
+  const pairs = rows
+    .flatMap((row) => (row.parents || []).map((parent) => [row.name, parent] as const))
+    .sort(([a, p], [b, q]) => a.localeCompare(b) || p.localeCompare(q));
+  for (const [tag, parent] of pairs) {
+    if (parent && parent !== tag && !under(tag, parents).has(parent)) {
+      parents.set(tag, new Set([...(parents.get(tag) ?? []), parent]));
     }
   }
   return parents;
 }
 
-/** A tag and every tag beneath it, at any depth. */
+/** A tag and every tag beneath it, at any depth, by every route. */
 export function under(tag: string, parents: Parents): Set<string> {
   const out = new Set([tag]);
   let grew = true;
   while (grew) {
     grew = false;
-    for (const [child, parent] of parents) {
-      if (out.has(parent) && !out.has(child)) {
+    for (const [child, above] of parents) {
+      if (!out.has(child) && [...above].some((p) => out.has(p))) {
         out.add(child);
         grew = true;
       }
@@ -46,19 +51,32 @@ export function under(tag: string, parents: Parents): Set<string> {
   return out;
 }
 
-/** The tags above a tag and the tag itself, top first: `["food", "recipe"]`. */
+/** The tags a tag sits under, by name. */
+export function parentsList(tag: string, parents: Parents): string[] {
+  return [...(parents.get(tag) ?? [])].sort((a, b) => a.localeCompare(b));
+}
+
+/**
+ * One line of tags above a tag and the tag itself, top first: `["food",
+ * "recipe"]`; through the first parent by name at each level.
+ */
 export function ancestry(tag: string, parents: Parents): string[] {
   const line = [tag];
-  for (let at = parents.get(tag); at && !line.includes(at); at = parents.get(at)) line.unshift(at);
+  for (let at = parentsList(tag, parents)[0]; at && !line.includes(at); at = parentsList(at, parents)[0]) line.unshift(at);
   return line;
 }
 
-/** A tag as a vault writes it: `food/recipe`. */
-export function nestedTag(tag: string, parents: Parents): string {
-  return ancestry(tag, parents).join("/");
+/** Every line from the top down to a tag, one per route, each top first. */
+export function ancestries(tag: string, parents: Parents): string[][] {
+  const walk = (at: string, seen: Set<string>): string[][] => {
+    const up = parentsList(at, parents).filter((p) => !seen.has(p));
+    if (up.length === 0) return [[at]];
+    return up.flatMap((p) => walk(p, new Set([...seen, p])).map((line) => [...line, at]));
+  };
+  return walk(tag, new Set([tag]));
 }
 
-/** Whether `parent` may hold `tag`: never itself, never a tag beneath it. */
+/** Whether `parent` may hold `tag`: never itself, never a tag beneath it. Null (the top) always. */
 export function canParent(tag: string, parent: string | null, parents: Parents): boolean {
   return parent === null || !under(tag, parents).has(parent);
 }
@@ -81,18 +99,19 @@ export interface TagNode {
 
 /**
  * The tree the sidebar draws: every tag a note carries, and every tag above
- * one, by name at each level. A tag no note carries, at any depth, is left out.
- * `n`: how many notes carry exactly those tags (`noteCounts()`), one when absent.
+ * one, by name at each level; a tag under two tags shows under each. A tag no
+ * note carries, at any depth, is left out. `n`: how many notes carry exactly
+ * those tags (`noteCounts()`), one when absent.
  */
 export function tagTree(rows: TagRow[], notes: { tags: string[] | null; n?: number }[]): TagNode[] {
   const parents = parentsOf(rows);
   const used = new Set(notes.flatMap((note) => note.tags || []));
   const shown = new Set<string>();
-  for (const tag of used) for (const at of ancestry(tag, parents)) shown.add(at);
+  for (const tag of used) for (const line of ancestries(tag, parents)) for (const at of line) shown.add(at);
 
   const build = (parent: string | null): TagNode[] =>
     [...shown]
-      .filter((tag) => (parents.get(tag) ?? null) === parent)
+      .filter((tag) => (parent === null ? !parents.has(tag) : parents.get(tag)?.has(parent)))
       .sort((a, b) => a.localeCompare(b))
       .map((name) => {
         const branch = under(name, parents);
