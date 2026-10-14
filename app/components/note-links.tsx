@@ -27,7 +27,7 @@ interface NoteLink {
  * it is the thing that was reported on, and saying it the other way round
  * would be wrong rather than merely awkward.
  */
-const PHRASE: Record<string, { to: TranslationKey; from: TranslationKey }> = {
+export const PHRASE: Record<string, { to: TranslationKey; from: TranslationKey }> = {
   "outcome-of": { to: "linkReports", from: "linkReportedBy" },
   "same-event": { to: "linkSameEvent", from: "linkSameEvent" },
   contradicts: { to: "linkContradicts", from: "linkContradictedBy" },

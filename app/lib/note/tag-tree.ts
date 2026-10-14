@@ -51,6 +51,13 @@ export function under(tag: string, parents: Parents): Set<string> {
   return out;
 }
 
+/** A tag and every tag above it, at any depth, by every route. */
+export function above(tag: string, parents: Parents): Set<string> {
+  const out = new Set([tag]);
+  for (const at of out) for (const parent of parents.get(at) ?? []) out.add(parent);
+  return out;
+}
+
 /** The tags a tag sits under, by name. */
 export function parentsList(tag: string, parents: Parents): string[] {
   return [...(parents.get(tag) ?? [])].sort((a, b) => a.localeCompare(b));
