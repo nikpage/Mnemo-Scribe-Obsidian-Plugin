@@ -42,11 +42,12 @@ export const NEW_TAG_NOTES = 2;
 
 /**
  * Whether the person is asked yet. A tag the model proposes waits for a
- * second note; one the person said out loud, a folder they used, or a
- * tidy-up's is asked at once.
+ * second note, unless one of its notes has no tag at all: a bare note is
+ * asked about at once. One the person said out loud, a folder they used, or
+ * a tidy-up's is asked at once too.
  */
-export function shown(s: Pick<Suggestion, "kind" | "source" | "notes">): boolean {
-  return s.kind !== "new" || s.source !== "model" || s.notes.length >= NEW_TAG_NOTES;
+export function shown(s: Pick<Suggestion, "kind" | "source" | "notes">, bare: (noteId: string) => boolean = () => false): boolean {
+  return s.kind !== "new" || s.source !== "model" || s.notes.length >= NEW_TAG_NOTES || s.notes.some((n) => bare(n.id));
 }
 
 /** The tags the person has, with their meanings: those in use, and those given a meaning. */
@@ -75,8 +76,8 @@ export async function skippedNames(admin: Admin, userId: string, any = false): P
 
 /**
  * The questions waiting for the person, as the Tags screen shows them: a
- * model's new tag once two notes need it, and no add or remove the person
- * already made by hand. Each with its notes' titles.
+ * model's new tag once two notes need it or one of them has no tag, and no
+ * add or remove the person already made by hand. Each with its notes' titles.
  */
 export async function openQuestions(admin: Admin, userId: string): Promise<(Suggestion & { title: string; notes: { id: string; why: string; title: string }[] })[]> {
   const { data } = await admin
@@ -85,13 +86,15 @@ export async function openQuestions(admin: Admin, userId: string): Promise<(Sugg
     .eq("user_id", userId)
     .eq("state", "open")
     .order("created_at", { ascending: true });
-  const open = ((data || []) as Suggestion[]).filter(shown);
-  const ids = [...new Set(open.flatMap((s) => (s.recording_id ? [s.recording_id] : s.notes.map((n) => n.id))))];
+  const all = (data || []) as Suggestion[];
+  const ids = [...new Set(all.flatMap((s) => (s.recording_id ? [s.recording_id] : s.notes.map((n) => n.id))))];
   const { data: notes } = ids.length
     ? await admin.from("recordings").select("id, label, tags").eq("user_id", userId).in("id", ids)
     : { data: [] };
   const byId = new Map((notes || []).map((n: { id: string; label: string; tags: string[] | null }) => [n.id, n]));
-  return open
+  const bare = (id: string) => byId.has(id) && (byId.get(id)!.tags || []).length === 0;
+  return all
+    .filter((s) => shown(s, bare))
     .filter((s) => {
       if (s.kind !== "add" && s.kind !== "remove") return true;
       const note = byId.get(s.recording_id);
@@ -102,6 +105,25 @@ export async function openQuestions(admin: Admin, userId: string): Promise<(Sugg
       notes: s.notes.map((n) => ({ ...n, title: byId.get(n.id)?.label ?? "" })),
       title: s.recording_id ? (byId.get(s.recording_id)?.label ?? "") : "",
     }));
+}
+
+/** The new tags asked about for one note, whatever else needs them: shown on the note itself. */
+export async function noteQuestions(admin: Admin, userId: string, noteId: string): Promise<{ id: string; tag: string; meaning: string | null; parent: string; why: string; notes: number }[]> {
+  const { data } = await admin
+    .from("tag_suggestions")
+    .select("id, tag, target, meaning, notes")
+    .eq("user_id", userId)
+    .eq("state", "open")
+    .eq("kind", "new")
+    .contains("notes", [{ id: noteId }]);
+  return ((data || []) as Pick<Suggestion, "id" | "tag" | "target" | "meaning" | "notes">[]).map((s) => ({
+    id: s.id,
+    tag: s.tag,
+    meaning: s.meaning,
+    parent: s.target,
+    why: s.notes.find((n) => n.id === noteId)?.why ?? "",
+    notes: s.notes.length,
+  }));
 }
 
 /** The names the person's clients go by: never tags. */
@@ -185,6 +207,8 @@ async function carrying(admin: Admin, userId: string, tag: string): Promise<stri
 
 /** The person's answer to one suggestion, beyond keep or skip. */
 export interface Edit {
+  /** A new tag's name, as the person changed it. */
+  name?: string;
   meaning?: string;
   target?: string;
   /** Delete the tag instead of what was asked (a meaning, a merge, a parent). */
@@ -215,12 +239,20 @@ export async function decide(admin: Admin, userId: string, id: string, keep: boo
   if (keep) {
     const now = new Date().toISOString();
     if (s.kind === "new") {
-      await rememberTags(admin, userId, [s.tag], true);
+      // The person's name for it; one that is already theirs keeps what it has.
+      const tag = (edit.name !== undefined && normalizeSegment(edit.name)) || s.tag;
+      if (barred(tag, await clientNames(admin, userId))) return false;
+      const had = (await loadTagRows(admin, userId)).find((r) => r.name === tag);
+      await rememberTags(admin, userId, target ? [tag, target] : [tag], true);
       const rows = await loadTagRows(admin, userId);
-      const parent = target && rows.some((r) => r.name === target) && canParent(s.tag, target, parentsOf(rows)) ? target : null;
-      await admin.from("tag_vocabulary").update({ meaning, parent, updated_at: now }).eq("user_id", userId).eq("name", s.tag);
+      const parent = target && target !== tag && canParent(tag, target, parentsOf(rows)) ? target : null;
+      await admin
+        .from("tag_vocabulary")
+        .update({ meaning: had?.meaning ?? meaning, parent: had?.parent ?? parent, updated_at: now })
+        .eq("user_id", userId)
+        .eq("name", tag);
       for (const note of s.notes) {
-        await retag(admin, userId, note.id, (tags, why) => ({ tags: [...tags, s.tag], why: { ...why, [s.tag]: note.why } }));
+        await retag(admin, userId, note.id, (tags, why) => ({ tags: [...tags, tag], why: { ...why, [tag]: note.why } }));
       }
     } else if (s.kind === "meaning") {
       await rememberTags(admin, userId, [s.tag], true);
@@ -256,9 +288,15 @@ export async function decide(admin: Admin, userId: string, id: string, keep: boo
       await admin.from("tag_vocabulary").update({ parent: gone?.parent ?? null }).eq("user_id", userId).eq("parent", s.tag);
       await admin.from("tag_vocabulary").delete().eq("user_id", userId).eq("name", s.tag);
     } else if (s.kind === "parent") {
+      if (!target || target === s.tag) return false;
       await rememberTags(admin, userId, [s.tag, target], true);
-      if (!canParent(s.tag, target, parentsOf(await loadTagRows(admin, userId)))) return false;
+      const rows = await loadTagRows(admin, userId);
+      if (!canParent(s.tag, target, parentsOf(rows))) return false;
       await admin.from("tag_vocabulary").update({ parent: target, updated_at: now }).eq("user_id", userId).eq("name", s.tag);
+      // A new top-level tag comes with the meaning it was proposed with.
+      if (meaning && !rows.find((r) => r.name === target)?.meaning) {
+        await admin.from("tag_vocabulary").update({ meaning, updated_at: now }).eq("user_id", userId).eq("name", target);
+      }
     } else if (s.kind === "add") {
       await retag(admin, userId, s.recording_id, (tags, why) => ({ tags: [...tags, s.tag], why: { ...why, [s.tag]: s.why ?? "" } }));
     } else if (s.kind === "remove") {
@@ -305,9 +343,10 @@ async function ask(admin: Admin, userId: string, rows: Omit<Suggestion, "id">[])
 const blank: Pick<Suggestion, "target" | "recording_id" | "meaning" | "notes" | "why"> = { target: "", recording_id: "", meaning: null, notes: [], why: null };
 
 /**
- * A tidy-up: one look at every tag and the notes carrying it, saved as
- * suggestions. A tag on fewer than two notes is offered for retirement
- * without asking a model.
+ * A tidy-up: one look at every tag and the notes carrying it. Meanings for
+ * tags without one are written in; merges, parents and new top-level tags are
+ * saved as suggestions. A tag on fewer than two notes is offered for
+ * retirement without asking a model.
  */
 export async function tidy(admin: Admin, userId: string, runId: string): Promise<void> {
   const notes = await readableNotes(admin, userId);
@@ -329,14 +368,15 @@ export async function tidy(admin: Admin, userId: string, runId: string): Promise
   const subjects = await clientNames(admin, userId);
   const plan = await planTags(summaries, { lang: await primaryLanguage(admin, userId), subjects, asked: await skippedNames(admin, userId, true), ctx });
 
-  const thin = summaries.filter((t) => t.notes.length < 2 && !plan.retires.some((r) => r.tag === t.name) && !plan.merges.some((m) => m.tag === t.name));
+  for (const m of plan.meanings) {
+    await admin.from("tag_vocabulary").update({ meaning: m.meaning, updated_at: new Date().toISOString() }).eq("user_id", userId).eq("name", m.tag).is("meaning", null);
+  }
+  const thin = summaries.filter((t) => t.notes.length < 2 && !plan.merges.some((m) => m.tag === t.name));
   await ask(admin, userId, [
-    ...plan.retires.map((r) => ({ ...blank, kind: "retire" as const, tag: r.tag, why: r.why, source: "tidy" as const })),
     ...thin.map((t) => ({ ...blank, kind: "retire" as const, tag: t.name, why: t.notes.length ? "one note" : "no notes", source: "tidy" as const })),
     ...plan.merges.map((m) => ({ ...blank, kind: "merge" as const, tag: m.tag, target: m.into, why: m.why, source: "tidy" as const })),
-    ...plan.meanings.map((m) => ({ ...blank, kind: "meaning" as const, tag: m.tag, meaning: m.meaning, source: "tidy" as const })),
     ...plan.parents.map((p) => ({ ...blank, kind: "parent" as const, tag: p.tag, target: p.parent, source: "tidy" as const })),
-    ...plan.added.map((a) => ({ ...blank, kind: "new" as const, tag: a.tag, target: a.parent ?? "", meaning: a.meaning, why: a.why, source: "tidy" as const })),
+    ...plan.groups.flatMap((g) => g.children.map((c) => ({ ...blank, kind: "parent" as const, tag: c, target: g.tag, meaning: g.meaning, why: g.why, source: "tidy" as const }))),
   ]);
   const byRef = new Map(plan.moves.map((m) => [m.ref, m.tag]));
   for (const tag of own) {
