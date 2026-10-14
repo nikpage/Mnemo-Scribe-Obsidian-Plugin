@@ -222,23 +222,19 @@ async function every<T>(page: (from: number, to: number) => PromiseLike<{ data: 
   }
 }
 
-/** What the web is drawn from, for one account. */
-export async function loadWeb(admin: Db, userId: string): Promise<WebInput> {
-  const [rows, kept, asked, notes, links, facts, themes] = await Promise.all([
-    loadTagRows(admin, userId),
-    every<{ tag: string; parent: string; created_at: string | null }>((a, b) => admin.from("tag_parents").select("tag, parent, created_at").eq("user_id", userId).order("tag").order("parent").range(a, b)),
-    every<{ tag: string; target: string; why: string | null }>((a, b) =>
-      admin.from("tag_suggestions").select("tag, target, why").eq("user_id", userId).eq("kind", "parent").eq("state", "open").order("id").range(a, b)
-    ),
-    every<WebNote>((a, b) => admin.from("recordings").select("id, path, label, recorded_at, tags").eq("user_id", userId).eq("status", "done").eq("shelf", "normal").order("id").range(a, b)),
-    every<{ from_recording: string; to_recording: string; link_type: LinkType; reason: string | null }>((a, b) =>
-      admin
-        .from("note_links")
-        .select("from_recording, to_recording, link_type, reason")
-        .eq("user_id", userId)
-        .or("confirmed.is.null,confirmed.eq.true")
-        .order("id")
-        .range(a, b)
+/** How notes reach each other outside their tags: a note link, a fact subject, a theme. */
+export interface Routes {
+  /** Every link between notes, turned-down ones included (`confirmed === false`). */
+  links: (WebLink & { confirmed: boolean | null })[];
+  facts: { recording_id: string; subject: string }[];
+  themes: { name: string; evidence: string[] }[];
+}
+
+/** The routes between one account's notes. A turned-down link comes back marked, never dropped. */
+export async function loadRoutes(admin: Db, userId: string): Promise<Routes> {
+  const [links, facts, themes] = await Promise.all([
+    every<{ from_recording: string; to_recording: string; link_type: LinkType; reason: string | null; confirmed: boolean | null }>((a, b) =>
+      admin.from("note_links").select("from_recording, to_recording, link_type, reason, confirmed").eq("user_id", userId).order("id").range(a, b)
     ),
     every<{ recording_id: string; subject: string }>((a, b) =>
       admin.from("note_facts").select("recording_id, subject").eq("user_id", userId).gte("confidence", 0.5).order("id").range(a, b)
@@ -246,12 +242,30 @@ export async function loadWeb(admin: Db, userId: string): Promise<WebInput> {
     every<{ name: string; evidence: string[] | null }>((a, b) => admin.from("note_themes").select("name, evidence").eq("user_id", userId).order("id").range(a, b)),
   ]);
   return {
+    links: links.map((l) => ({ from: l.from_recording, to: l.to_recording, type: l.link_type, reason: l.reason || "", confirmed: l.confirmed })),
+    facts: facts.filter((f) => typeof f.subject === "string"),
+    themes: themes.map((t) => ({ name: t.name, evidence: t.evidence || [] })),
+  };
+}
+
+/** What the web is drawn from, for one account. */
+export async function loadWeb(admin: Db, userId: string): Promise<WebInput> {
+  const [rows, kept, asked, notes, routes] = await Promise.all([
+    loadTagRows(admin, userId),
+    every<{ tag: string; parent: string; created_at: string | null }>((a, b) => admin.from("tag_parents").select("tag, parent, created_at").eq("user_id", userId).order("tag").order("parent").range(a, b)),
+    every<{ tag: string; target: string; why: string | null }>((a, b) =>
+      admin.from("tag_suggestions").select("tag, target, why").eq("user_id", userId).eq("kind", "parent").eq("state", "open").order("id").range(a, b)
+    ),
+    every<WebNote>((a, b) => admin.from("recordings").select("id, path, label, recorded_at, tags").eq("user_id", userId).eq("status", "done").eq("shelf", "normal").order("id").range(a, b)),
+    loadRoutes(admin, userId),
+  ]);
+  return {
     rows,
     kept: kept.map((k) => ({ tag: k.tag, parent: k.parent, at: k.created_at })),
     asked: asked.map((s) => ({ tag: s.tag, parent: s.target, why: s.why })),
     notes,
-    links: links.map((l) => ({ from: l.from_recording, to: l.to_recording, type: l.link_type, reason: l.reason || "" })),
-    facts: facts.filter((f) => typeof f.subject === "string"),
-    themes: themes.map((t) => ({ name: t.name, evidence: t.evidence || [] })),
+    links: routes.links.filter((l) => l.confirmed !== false).map((l) => ({ from: l.from, to: l.to, type: l.type, reason: l.reason })),
+    facts: routes.facts,
+    themes: routes.themes,
   };
 }
