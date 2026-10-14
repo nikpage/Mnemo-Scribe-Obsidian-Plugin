@@ -196,10 +196,31 @@ ${R} .whitespace-pre-wrap { white-space: pre-wrap; }
 ${R} .text-foreground { color: var(--s-text); }
 ${R} .text-muted-foreground { color: var(--s-muted); }
 ${R} .text-primary { color: var(--s-accent); }
+${R} .text-2xl { font-size: 17px; }
+${R} .text-\[11px\] { font-size: 11px; }
+${R} .font-bold { font-weight: 700; }
+${R} .ml-auto { margin-left: auto; }
+${R} .w-full { width: 100%; }
+${R} .h-\[60vh\] { height: 60vh; }
+${R} .p-3 { padding: 12px; }
+${R} .touch-none { touch-action: none; }
+${R} .select-none { user-select: none; -webkit-user-select: none; }
+${R} .rounded-2xl { border-radius: var(--s-card); }
+${R} .border { border: 1px solid var(--s-line); }
+${R} .bg-card { background: var(--s-bg); }
+${R} .fill-current { fill: currentColor; }
+${R} .fill-primary { fill: var(--s-accent); }
+${R} .fill-primary\/15 { fill: color-mix(in srgb, var(--s-accent) 15%, transparent); }
+${R} .fill-primary\/30 { fill: color-mix(in srgb, var(--s-accent) 30%, transparent); }
+${R} .stroke-primary { stroke: var(--s-accent); }
+${R} .stroke-primary\/60 { stroke: color-mix(in srgb, var(--s-accent) 60%, transparent); }
+${R} .stroke-muted-foreground { stroke: var(--s-muted); }
+${R} .stroke-destructive { stroke: var(--s-danger); }
+${R} .stroke-border { stroke: var(--s-line); }
 `;
 
 /** Left undrawn on purpose: the app's wide-screen rules and page margins, which a side panel has no room for. */
-export const UNDRAWN = ["md:hidden", "md:p-6", "p-4", "max-w-2xl"];
+export const UNDRAWN = ["md:hidden", "md:p-6", "md:h-[70vh]", "p-4", "max-w-2xl"];
 
 export function addStyle(doc: Document = document) {
   if (doc.getElementById("scribe-panel-style")) return;

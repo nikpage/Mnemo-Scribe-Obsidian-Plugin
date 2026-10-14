@@ -12,7 +12,7 @@ import { OPEN_BRAIN } from "@/components/home-dashboard";
 
 /**
  * Scribe beside the notes, the same in every app that holds them. Brain,
- * Search and This note are the app's own screens (`../app/screens.tsx`), so
+ * Search, Web and This note are the app's own screens (`../app/screens.tsx`), so
  * they change when the app's do; Sync is the plugins' own.
  *
  * Reading back what Scribe already wrote is free. A paid press carries its
@@ -21,10 +21,10 @@ import { OPEN_BRAIN } from "@/components/home-dashboard";
  * app's never-pay-twice rules hold.
  */
 
-const TABS = ["home", "brain", "search", "note", "sync"] as const;
+const TABS = ["home", "brain", "search", "web", "note", "sync"] as const;
 type Tab = (typeof TABS)[number];
-const TAB_TIP: Record<Tab, Key> = { home: "tipTabHome", brain: "tipBrain", search: "tipTabSearch", note: "tipTabNote", sync: "tipTabSync" };
-const TAB_LABEL: Record<Tab, Key> = { home: "tabHome", brain: "brainTitle", search: "tabSearch", note: "tabNote", sync: "tabSync" };
+const TAB_TIP: Record<Tab, Key> = { home: "tipTabHome", brain: "tipBrain", search: "tipTabSearch", web: "tipWeb", note: "tipTabNote", sync: "tipTabSync" };
+const TAB_LABEL: Record<Tab, Key> = { home: "tabHome", brain: "brainTitle", search: "tabSearch", web: "tabWeb", note: "tabNote", sync: "tabSync" };
 
 type Rates = Billing & { rates: { operation: string; credits: number | string; per: number | string }[] };
 

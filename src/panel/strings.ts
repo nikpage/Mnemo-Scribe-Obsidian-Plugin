@@ -11,6 +11,7 @@ const OWN = {
   en: {
     tabHome: "Home",
     tabSearch: "Search",
+    tabWeb: "Web",
     tabNote: "This note",
     tabSync: "Sync",
     tipPanelRecord: "Records a voice note from here. It is transcribed, summarised and filed, then synced into your notes app.",
@@ -46,6 +47,7 @@ const OWN = {
   cs: {
     tabHome: "Domů",
     tabSearch: "Hledat",
+    tabWeb: "Síť",
     tabNote: "Tato poznámka",
     tabSync: "Synchronizace",
     tipPanelRecord: "Nahraje hlasovou poznámku odsud. Přepíše se, shrne a zařadí a pak se synchronizuje do vaší aplikace s poznámkami.",
