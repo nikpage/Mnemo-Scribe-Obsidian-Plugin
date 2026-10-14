@@ -3,11 +3,11 @@
 // [Guru]
 import Link from "next/link";
 import { useState } from "react";
-import { answered, send, useApi } from "@/lib/api";
+import { answered, send, useApi, useOptimistic } from "@/lib/api";
 import { busyUntilDone } from "@/lib/busy";
 import { formatDate } from "@/lib/format";
 import { useLang } from "@/hooks/use-lang";
-import { Button } from "@/components/ui";
+import { Button, List } from "@/components/ui";
 import type { TranslationKey } from "@/lib/i18n";
 import { NoteSection } from "@/components/note-section";
 
@@ -38,21 +38,32 @@ const PHRASE: Record<string, { to: TranslationKey; from: TranslationKey }> = {
 /**
  * Related: always shown once answered, so a note with no links says whether
  * it was never looked at or looked at and found nothing, and offers to look
- * again — against every note, earlier and later.
+ * again — against every note, earlier and later. Links the person turned
+ * down sit folded under "Turned down", each restorable as kept.
  */
 export function NoteLinks({ recordingId }: { recordingId: string }) {
   const { t, lang } = useLang();
   const res = useApi<{ links: NoteLink[]; lookedAt?: string | null }>(`/api/notes/links?id=${recordingId}`);
   const [looking, setLooking] = useState(false);
   const [failed, setFailed] = useState(false);
+  const [showDown, setShowDown] = useState(false);
+  const optimistic = useOptimistic(res.mutate);
 
   if (!answered(res)) return null;
   const links = res.data?.links ?? [];
   const lookedAt = res.data?.lookedAt ?? null;
 
   // A link the user rejected is kept in the database so the question is not
-  // asked twice, but it is not a relation any more and is not shown.
+  // asked twice, but it is not a relation any more: it waits under "Turned down".
   const shown = links.filter((l) => l.confirmed !== false);
+  const down = links.filter((l) => l.confirmed === false);
+
+  async function restore(id: string) {
+    const ok = await optimistic({ links: links.map((l) => (l.id === id ? { ...l, confirmed: true } : l)), lookedAt }, () =>
+      send("/api/notes/links", "PUT", { id })
+    );
+    setFailed(!ok);
+  }
 
   async function lookAgain() {
     const done = busyUntilDone();
@@ -102,6 +113,29 @@ export function NoteLinks({ recordingId }: { recordingId: string }) {
         </Button>
         {failed && <span>{t("linksLookFailed")}</span>}
       </p>
+      {down.length > 0 && (
+        <div className="mt-2">
+          <Button variant="link" className="text-xs" tip={t("tipTurnedDown")} onClick={() => setShowDown((open) => !open)}>
+            {t("turnedDown", { n: down.length })}
+          </Button>
+          {showDown && (
+            <List className="mt-2">
+              {down.map((link) => (
+                <li key={link.id} className="flex flex-wrap items-start gap-2 px-4 py-3 text-sm">
+                  <span className="min-w-0 flex-1">
+                    <span className="text-muted-foreground">{t(PHRASE[link.type][link.direction])} </span>
+                    {link.note.title}
+                    {link.reason && <span className="block text-xs text-muted-foreground">{link.reason}</span>}
+                  </span>
+                  <Button size="sm" tip={t("tipRestoreLink")} onClick={() => void restore(link.id)}>
+                    {t("restore")}
+                  </Button>
+                </li>
+              ))}
+            </List>
+          )}
+        </div>
+      )}
     </NoteSection>
   );
 }

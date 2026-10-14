@@ -107,6 +107,24 @@ export async function openQuestions(admin: Admin, userId: string): Promise<(Sugg
     }));
 }
 
+/** New tags and parents the person turned down, newest first, each with its notes' titles: restorable. */
+export async function turnedDown(admin: Admin, userId: string): Promise<(Pick<Suggestion, "id" | "kind" | "tag" | "target" | "meaning"> & { notes: string[] })[]> {
+  const { data } = await admin
+    .from("tag_suggestions")
+    .select("id, kind, tag, target, meaning, notes")
+    .eq("user_id", userId)
+    .eq("state", "skipped")
+    .in("kind", ["new", "parent"])
+    .not("decided_at", "is", null)
+    .order("decided_at", { ascending: false })
+    .limit(100);
+  const rows = (data || []) as Pick<Suggestion, "id" | "kind" | "tag" | "target" | "meaning" | "notes">[];
+  const ids = [...new Set(rows.flatMap((s) => s.notes.map((n) => n.id)))];
+  const { data: notes } = ids.length ? await admin.from("recordings").select("id, label").eq("user_id", userId).in("id", ids) : { data: [] };
+  const title = new Map((notes || []).map((n: { id: string; label: string }) => [n.id, n.label]));
+  return rows.map((s) => ({ ...s, notes: s.notes.flatMap((n) => (title.has(n.id) ? [title.get(n.id)!] : [])) }));
+}
+
 /** The new tags asked about for one note, whatever else needs them: shown on the note itself. */
 export async function noteQuestions(admin: Admin, userId: string, noteId: string): Promise<{ id: string; tag: string; meaning: string | null; parent: string; why: string; notes: number }[]> {
   const { data } = await admin
@@ -253,15 +271,17 @@ async function dropTag(admin: Admin, userId: string, tag: string, heirs: string[
  * keeping it: a reworded meaning, another parent, another tag to merge into,
  * or the tag deleted instead, with the notes it leaves bare moved to another.
  * Returns false when the suggestion is not this person's or already answered.
+ * `was: "skipped"` restores one the person turned down: kept, exactly as a
+ * keep, and never one the app closed itself (no `decided_at`).
  */
-export async function decide(admin: Admin, userId: string, id: string, keep: boolean, edit: Edit = {}): Promise<boolean> {
+export async function decide(admin: Admin, userId: string, id: string, keep: boolean, edit: Edit = {}, was: "open" | "skipped" = "open"): Promise<boolean> {
   const { data: row } = await admin
     .from("tag_suggestions")
-    .select("id, kind, tag, target, recording_id, meaning, notes, why, source, state")
+    .select("id, kind, tag, target, recording_id, meaning, notes, why, source, state, decided_at")
     .eq("user_id", userId)
     .eq("id", id)
     .maybeSingle();
-  if (!row || row.state !== "open") return false;
+  if (!row || row.state !== was || (was === "skipped" && !row.decided_at)) return false;
   const s = row as Suggestion & { state: string };
   if (edit.retire && keep && s.kind !== "new" && s.kind !== "add" && s.kind !== "remove") s.kind = "retire";
   const meaning = (edit.meaning ?? s.meaning ?? "").trim() || null;
@@ -378,7 +398,8 @@ const blank: Pick<Suggestion, "target" | "recording_id" | "meaning" | "notes" | 
  */
 export async function tidy(admin: Admin, userId: string, runId: string): Promise<void> {
   // A meaning is written, not asked: questions about one from before are closed.
-  await admin.from("tag_suggestions").update({ state: "skipped", decided_at: new Date().toISOString() }).eq("user_id", userId).eq("kind", "meaning").eq("state", "open");
+  // Closed by the app, not turned down: no `decided_at`, so never listed as the person's "no".
+  await admin.from("tag_suggestions").update({ state: "skipped" }).eq("user_id", userId).eq("kind", "meaning").eq("state", "open");
   const notes = await readableNotes(admin, userId);
   const inUse = [...new Set(notes.flatMap((n) => n.tags || []))];
   const own = await ownTags(admin, userId, inUse);
@@ -451,7 +472,7 @@ async function closeStale(
   if (stale.length === 0) return;
   await admin
     .from("tag_suggestions")
-    .update({ state: "skipped", decided_at: new Date().toISOString() })
+    .update({ state: "skipped" })
     .eq("user_id", userId)
     .in("id", stale.map((s) => s.id));
 }
