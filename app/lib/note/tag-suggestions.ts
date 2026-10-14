@@ -161,7 +161,7 @@ async function retag(
 ): Promise<void> {
   const { data: note } = await admin
     .from("recordings")
-    .select("tags, machine_tags, tag_why")
+    .select("tags, tag_why")
     .eq("user_id", userId)
     .eq("id", noteId)
     .maybeSingle();
@@ -169,12 +169,10 @@ async function retag(
   const before = (note.tags || []) as string[];
   const next = change([...before], { ...((note.tag_why || {}) as Record<string, string>) });
   const tags = normalizeTags(next.tags);
-  const removed = before.filter((tag) => !tags.includes(tag));
-  const machine = normalizeTags([...((note.machine_tags || []) as string[]).filter((tag) => !removed.includes(tag)), ...tags]);
   const why = Object.fromEntries(Object.entries(next.why).filter(([tag]) => tags.includes(tag)));
   await admin
     .from("recordings")
-    .update({ tags, machine_tags: machine, tag_why: why, filed: true, updated_at: new Date().toISOString() })
+    .update({ tags, tag_why: why, filed: true, updated_at: new Date().toISOString() })
     .eq("user_id", userId)
     .eq("id", noteId);
 }

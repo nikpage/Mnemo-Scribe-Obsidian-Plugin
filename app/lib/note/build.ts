@@ -14,7 +14,6 @@ import { type Parents, nestedTag } from "@/lib/note/tag-tree";
 
 export type NoteAnalysis = {
   summary?: string;
-  keyTopics?: string[];
   actionItems?: string[];
 };
 
