@@ -217,6 +217,7 @@ ${R} .stroke-primary\/60 { stroke: color-mix(in srgb, var(--s-accent) 60%, trans
 ${R} .stroke-muted-foreground { stroke: var(--s-muted); }
 ${R} .stroke-destructive { stroke: var(--s-danger); }
 ${R} .stroke-border { stroke: var(--s-line); }
+${R} .stroke-card { stroke: var(--s-bg); }
 `;
 
 /** Left undrawn on purpose: the app's wide-screen rules and page margins, which a side panel has no room for. */

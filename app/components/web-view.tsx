@@ -34,7 +34,7 @@ type Why =
   | { kind: "link"; link: Link }
   | { kind: "carries"; note: NoteRef; tags: string[] };
 
-type Dot = { id: string; kind: "tag" | "centre" | "note"; label: string; r: number; note?: NoteRef; tag?: string };
+type Dot = { id: string; kind: "tag" | "centre" | "note"; label: string; r: number; note?: NoteRef; tag?: string; count?: number };
 type Line = { id: string; a: string; b: string; look: "kept" | "asked" | "bridge" | "link" | "carries"; length: number; pull: number; why: Why };
 
 /** A start for each dot from its name alone, so a new tag leaves the others where they were. */
@@ -77,7 +77,7 @@ const tagRadius = (count: number) => Math.min(48, 6 + 5 * Math.sqrt(count));
 /** The whole web as dots and lines. */
 function wholeShape(web: Web): { dots: Dot[]; lines: Line[] } {
   const meaning = new Map(web.tags.map((tag) => [tag.name, tag.meaning]));
-  const dots: Dot[] = web.tags.map((tag) => ({ id: `t:${tag.name}`, kind: "tag", label: `#${tag.name}`, r: tagRadius(tag.count), tag: tag.name }));
+  const dots: Dot[] = web.tags.map((tag) => ({ id: `t:${tag.name}`, kind: "tag", label: `#${tag.name}`, r: tagRadius(tag.count), tag: tag.name, count: tag.count }));
   const lines: Line[] = [
     ...web.edges.map((edge): Line => ({
       id: `p:${edge.tag}\n${edge.parent}`,
@@ -106,7 +106,7 @@ function centreShape(web: TagWeb): { dots: Dot[]; lines: Line[] } {
   const centre = `t:${web.tag}`;
   const inside = new Set(web.notes.map((note) => note.id));
   const dots: Dot[] = [
-    { id: centre, kind: "centre", label: `#${web.tag}`, r: tagRadius(web.notes.length), tag: web.tag },
+    { id: centre, kind: "centre", label: `#${web.tag}`, r: tagRadius(web.notes.length), tag: web.tag, count: web.notes.length },
     ...web.notes.map((note): Dot => ({ id: `n:${note.id}`, kind: "note", label: short(note.title), r: 6, note })),
     ...web.bridges.map((bridge): Dot => ({ id: `t:${bridge.tag}`, kind: "tag", label: `#${bridge.tag}`, r: 9, tag: bridge.tag })),
   ];
@@ -160,9 +160,32 @@ const STROKE: Record<Line["look"], string> = {
   carries: "stroke-border",
 };
 
+/** Motion is for people who have not asked for less of it. */
+function wantsStill(): boolean {
+  try {
+    return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  } catch {
+    return false;
+  }
+}
+
+/** A one-shot arrival, `after` seconds in: the element is set to opacity 0 and this brings it to 1. */
+function Arrive({ after, grow }: { after: number; grow?: boolean }) {
+  const timing = { begin: `${after.toFixed(2)}s`, dur: "0.4s", fill: "freeze" as const };
+  return (
+    <>
+      <animate attributeName="opacity" from="0" to="1" {...timing} />
+      {grow && <animateTransform attributeName="transform" type="scale" from="0.6" to="1" additive="replace" {...timing} />}
+    </>
+  );
+}
+
 export function WebView() {
   const { t, lang } = useLang();
   const [centre, setCentre] = useState<string | null>(null);
+  // Nothing moves until pressed: what arrives after a press eases in; the first drawing never does.
+  const [pressed, setPressed] = useState(false);
+  const [hot, setHot] = useState<string | null>(null);
   const whole = useApi<Web>("/api/notes/web");
   // The tag last opened stays drawn until the next one has answered.
   const around = useApi<TagWeb>(centre ? webUrl(centre) : null, { keepPreviousData: true });
@@ -243,8 +266,10 @@ export function WebView() {
     }
     act();
   };
-  const open = (tag: string) => {
+  const open = (tag: string | null) => {
     setPicked(null);
+    setPressed(true);
+    setHot(null);
     setCentre(tag);
   };
   const ready = (tag: string) => void preload(webUrl(tag), api);
@@ -255,7 +280,7 @@ export function WebView() {
     <div className="mb-3 flex flex-wrap items-center gap-3">
       <h1 className="text-2xl font-bold">#{centred.tag}</h1>
       <span className="text-sm text-muted-foreground">{t("webNotes", { n: centred.notes.length })}</span>
-      <Button size="sm" variant="secondary" tip={t("tipWebWhole")} onClick={() => setCentre(null)} className="ml-auto">
+      <Button size="sm" variant="secondary" tip={t("tipWebWhole")} onClick={() => open(null)} className="ml-auto">
         {t("webWhole")}
       </Button>
       {centred.meaning && <p className="w-full text-sm text-muted-foreground">{centred.meaning}</p>}
@@ -281,6 +306,13 @@ export function WebView() {
   const pad = 24;
   const box = [Math.min(...xs) - pad, Math.min(...ys) - pad, Math.max(...xs) - Math.min(...xs) + 2 * pad, Math.max(...ys) - Math.min(...ys) + 2 * pad];
 
+  const animate = pressed && !wantsStill();
+  // Arrival order: from the middle outwards.
+  const far = Math.max(1, ...shape.dots.map((d) => Math.hypot(at(d.id).x, at(d.id).y)));
+  const after = (id: string) => 0.45 * (Math.hypot(at(id).x, at(id).y) / far);
+  const dim = picked ? picked.id : null;
+  const touching = (line: Line) => hot !== null && (line.a === hot || line.b === hot);
+
   return (
     <div>
       {header}
@@ -295,14 +327,32 @@ export function WebView() {
         onPointerUp={up}
         onPointerCancel={up}
       >
+        <defs>
+          <pattern id="web-dots" width="26" height="26" patternUnits="userSpaceOnUse">
+            <circle cx="13" cy="13" r="0.8" fill="none" strokeWidth="1.2" className="stroke-border" />
+          </pattern>
+        </defs>
         <g transform={`translate(${view.x} ${view.y}) scale(${view.k})`}>
+          <rect x={-4000} y={-4000} width={8000} height={8000} fill="url(#web-dots)" />
           {shape.lines.map((line) => {
             const a = at(line.a);
             const b = at(line.b);
             const on = picked?.id === line.id;
+            const faded = (dim !== null && !on) || (hot !== null && !touching(line));
             return (
-              <g key={line.id} role="button" tabIndex={0} data-tip={t("tipWebLine")} className="cursor-pointer" onClick={tap(() => setPicked(line))} onKeyDown={(e) => e.key === "Enter" && setPicked(line)}>
-                <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} className={STROKE[line.look]} strokeWidth={on ? 3 : line.look === "carries" ? 1 : 1.5} strokeDasharray={line.look === "asked" ? "5 4" : line.look === "bridge" ? "2 3" : undefined} />
+              <g key={line.id} role="button" tabIndex={0} data-tip={t("tipWebLine")} className="cursor-pointer" onClick={tap(() => setPicked(line))} onKeyDown={(e) => e.key === "Enter" && setPicked(line)} opacity={animate ? 0 : undefined}>
+                {animate && <Arrive after={0.15 + (after(line.a) + after(line.b)) / 2} />}
+                <line
+                  x1={a.x}
+                  y1={a.y}
+                  x2={b.x}
+                  y2={b.y}
+                  className={STROKE[line.look]}
+                  strokeWidth={on || touching(line) ? 3 : line.look === "carries" ? 1 : 1.5}
+                  strokeLinecap="round"
+                  strokeDasharray={line.look === "asked" ? "5 4" : line.look === "bridge" ? "2 3" : undefined}
+                  style={{ opacity: faded ? 0.3 : 1, transition: "opacity 180ms, stroke-width 180ms" }}
+                />
                 <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke="transparent" strokeWidth={12} />
               </g>
             );
@@ -310,20 +360,36 @@ export function WebView() {
           {shape.dots.map((dot) => {
             const p = at(dot.id);
             const label = (
-              <text x={p.x} y={p.y + dot.r + 12} textAnchor="middle" className={`fill-current text-[11px] ${dot.kind === "note" ? "text-muted-foreground" : "font-semibold"}`}>
+              <text
+                x={0}
+                y={dot.r + 13}
+                textAnchor="middle"
+                paintOrder="stroke"
+                strokeWidth={3}
+                strokeLinejoin="round"
+                className={`fill-current stroke-card text-[11px] ${dot.kind === "note" ? "text-muted-foreground" : "font-semibold"}`}
+              >
                 {dot.label}
               </text>
             );
+            const arrive = animate ? <Arrive after={after(dot.id)} grow /> : null;
             if (dot.note)
               return (
                 <NoteLink key={dot.id} note={dot.note} tip={t("tipWebNote")} onClick={(e) => moved.current && e.preventDefault()}>
-                  <circle cx={p.x} cy={p.y} r={12} fill="transparent" />
-                  <circle cx={p.x} cy={p.y} r={dot.r} className="fill-primary" />
-                  {label}
+                  <g transform={`translate(${p.x} ${p.y})`}>
+                    <g opacity={animate ? 0 : undefined}>
+                      {arrive}
+                      <circle r={12} fill="transparent" />
+                      <circle r={dot.r + 3} className="fill-primary/15" />
+                      <circle r={dot.r} className="fill-primary" />
+                      {label}
+                    </g>
+                  </g>
                 </NoteLink>
               );
             const tag = dot.tag!;
             const here = dot.kind === "centre";
+            const lit = hot === dot.id;
             return (
               <g
                 key={dot.id}
@@ -331,12 +397,32 @@ export function WebView() {
                 tabIndex={0}
                 data-tip={t("tipWebTag")}
                 className={here ? "" : "cursor-pointer"}
-                onPointerEnter={() => !here && ready(tag)}
+                transform={`translate(${p.x} ${p.y})`}
+                onPointerEnter={() => {
+                  if (!here) ready(tag);
+                  setHot(dot.id);
+                }}
+                onPointerLeave={() => setHot(null)}
                 onClick={tap(() => !here && open(tag))}
                 onKeyDown={(e) => e.key === "Enter" && !here && open(tag)}
               >
-                <circle cx={p.x} cy={p.y} r={dot.r} className={here ? "fill-primary/30 stroke-primary" : "fill-primary/15 stroke-primary/60"} strokeWidth={1.5} />
-                {label}
+                <g opacity={animate ? 0 : undefined}>
+                  {arrive}
+                  <circle r={dot.r + 7} className="fill-primary/15" opacity={lit || here ? 1 : 0.5} style={{ transition: "opacity 180ms" }} />
+                  <circle r={dot.r} className={here || lit ? "fill-primary/30 stroke-primary" : "fill-primary/15 stroke-primary/60"} strokeWidth={here ? 2.5 : 1.5} style={{ transition: "fill 180ms, stroke 180ms" }} />
+                  {dot.r >= 16 && dot.count !== undefined && (
+                    <text x={0} y={4} textAnchor="middle" fontSize={dot.r >= 28 ? 14 : 11} fontWeight={600} className="fill-current">
+                      {dot.count}
+                    </text>
+                  )}
+                  {label}
+                </g>
+                {animate && here && (
+                  <circle r={dot.r} fill="none" strokeWidth={2} className="stroke-primary" opacity={0}>
+                    <animate attributeName="r" from={dot.r} to={dot.r + 30} dur="0.8s" begin="0.2s" fill="freeze" />
+                    <animate attributeName="opacity" from="0.7" to="0" dur="0.8s" begin="0.2s" fill="freeze" />
+                  </circle>
+                )}
               </g>
             );
           })}
@@ -344,7 +430,7 @@ export function WebView() {
       </svg>
       {picked && (
         <div className="mt-3 rounded-2xl border border-border bg-card p-3 text-sm" aria-live="polite">
-          <Explain why={picked.why} onOpen={open} lang={lang} t={t} />
+          <Explain why={picked.why} onOpen={(tag) => open(tag)} lang={lang} t={t} />
         </div>
       )}
     </div>
