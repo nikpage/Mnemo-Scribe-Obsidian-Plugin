@@ -8,7 +8,7 @@ import { primaryLanguage } from "@/lib/note/language";
 import { READ } from "@/lib/note/shelf";
 import { loadSubjects } from "@/lib/note/subjects";
 import { canParent, parentsOf } from "@/lib/note/tag-tree";
-import { type Earned, type OwnTag, type Proposal, type TagSummary, barred, checkNotes, planTags } from "@/lib/note/tagging";
+import { type Earned, type OwnTag, type Proposal, type TagSummary, barred, checkNotes, planTags, tagNote } from "@/lib/note/tagging";
 import { applyVocabulary, loadTagRows, loadVocabulary, rememberTags } from "@/lib/note/vocabulary";
 
 /**
@@ -349,6 +349,8 @@ const blank: Pick<Suggestion, "target" | "recording_id" | "meaning" | "notes" | 
  * retirement without asking a model.
  */
 export async function tidy(admin: Admin, userId: string, runId: string): Promise<void> {
+  // A meaning is written, not asked: questions about one from before are closed.
+  await admin.from("tag_suggestions").update({ state: "skipped", decided_at: new Date().toISOString() }).eq("user_id", userId).eq("kind", "meaning").eq("state", "open");
   const notes = await readableNotes(admin, userId);
   const inUse = [...new Set(notes.flatMap((n) => n.tags || []))];
   const own = await ownTags(admin, userId, inUse);
@@ -411,8 +413,26 @@ export async function recheck(admin: Admin, userId: string, runId: string): Prom
     for (const tag of due) {
       await admin.from("tag_vocabulary").update({ checked_meaning: tag.meaning }).eq("user_id", userId).eq("name", tag.name);
     }
+    await askForBare(admin, userId, notes, verdicts);
   }
   await finish(admin, userId, runId);
+}
+
+/**
+ * A note with no tag that the re-check found none for: the tag it needs is
+ * asked about, as a note being filed would be.
+ */
+async function askForBare(admin: Admin, userId: string, notes: Awaited<ReturnType<typeof readableNotes>>, verdicts: Map<string, Earned[]>): Promise<void> {
+  const bare = notes.filter((n) => (n.tags || []).length === 0 && (verdicts.get(n.id) || []).length === 0);
+  if (bare.length === 0) return;
+  const own = await ownTags(admin, userId, await tagsInUse(admin, userId));
+  const opts = { lang: await primaryLanguage(admin, userId), subjects: await clientNames(admin, userId), ctx: { userId } };
+  const { data: open } = await admin.from("tag_suggestions").select("notes").eq("user_id", userId).eq("kind", "new").eq("state", "open");
+  const asked = new Set(((open || []) as { notes: { id: string }[] }[]).flatMap((s) => s.notes.map((n) => n.id)));
+  for (const note of bare.filter((n) => !asked.has(n.id))) {
+    const read = await tagNote({ text: noteText(note) }, own, { ...opts, asked: await skippedNames(admin, userId) });
+    await proposeTags(admin, userId, note.id, read.proposed, "model");
+  }
 }
 
 /**
@@ -467,8 +487,11 @@ export async function runTags(admin: Admin, runId: string): Promise<void> {
   const { data: run } = await admin.from("tag_runs").select("id, user_id, kind").eq("id", runId).maybeSingle();
   if (!run) return;
   try {
-    if (run.kind === "tidy") await tidy(admin, run.user_id, run.id);
-    else await recheck(admin, run.user_id, run.id);
+    if (run.kind === "tidy") {
+      await tidy(admin, run.user_id, run.id);
+      // Meanings the tidy-up wrote are read against every note at once, unless it asked something first.
+      if (await recheckDue(admin, run.user_id)) await recheck(admin, run.user_id, run.id);
+    } else await recheck(admin, run.user_id, run.id);
   } catch (err) {
     console.error(`Tag ${run.kind} failed:`, err);
     await admin
