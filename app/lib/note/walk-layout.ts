@@ -11,7 +11,8 @@ import type { Walk, WalkNode } from "@/lib/note/walk";
 
 const MARGIN = 56;
 const STEP = 74;
-/** How much room a band for the notes shared by neighbouring anchors has beside an anchor's own band. */
+/** The room of an anchor's own band and of the band for the notes shared by neighbouring anchors, in the same unit. */
+const ZONE_WEIGHT = 1.4;
 const COMMON_WEIGHT = 1.6;
 /** Narrower than this, time runs down the screen instead of across it. */
 export const WIDE = 640;
@@ -124,19 +125,22 @@ export function layoutWalk(walk: Walk, width: number, height: number, anchoring?
   const at = new Map<string, P>();
   const kids = new Map<string, number>();
 
-  // Several anchors: the picture is cut across the time axis into bands, in the order of the set: each
-  // anchor's own band (its centre and the notes only it reaches), and between neighbours a band for what
-  // they share. A note held by several sits in the band between the first and last of its anchors; the
-  // centres lie outside those bands, and a note one anchor reaches stays in that anchor's band.
-  type Zone = { lo: number; hi: number; row: number };
+  // Several anchors: the picture is cut across the time axis into bands in the order of the set: an
+  // anchor's own band, then a band for what its neighbours share, and so on. The first anchor stands at
+  // the inner edge of the top band and the last at the inner edge of the bottom one, so the notes only
+  // one of them reaches lie beyond it, away from the other, and the notes both reach lie between the two.
+  type Zone = { lo: number; hi: number; row: number; r: number };
   const zones = new Map<string, Zone>();
   const bounds = new Map<string, [number, number]>();
   if (multi) {
-    const n = anchoring!.ids.length;
-    const unit = (vHigh - vLow) / (n + (n - 1) * COMMON_WEIGHT);
-    anchoring!.ids.forEach((id, k) => {
-      const lo = vLow + unit * k * (1 + COMMON_WEIGHT);
-      zones.set(id, { lo, hi: lo + unit, row: lo + unit / 2 });
+    const ids = anchoring!.ids;
+    const unit = (vHigh - vLow) / (ids.length * ZONE_WEIGHT + (ids.length - 1) * COMMON_WEIGHT);
+    ids.forEach((id, k) => {
+      const lo = vLow + unit * k * (ZONE_WEIGHT + COMMON_WEIGHT);
+      const hi = lo + unit * ZONE_WEIGHT;
+      const r = radius(byId.get(id)!) + 8;
+      const row = k === 0 ? hi - r : k === ids.length - 1 ? lo + r : (lo + hi) / 2;
+      zones.set(id, { lo, hi, row, r });
     });
   }
 
@@ -160,23 +164,31 @@ export function layoutWalk(walk: Walk, width: number, height: number, anchoring?
     let v = V / 2;
     if (multi) {
       const own = zones.get(n.id);
+      const ids = anchoring!.ids;
       const held = (anchoring!.reach.get(n.id) ?? []).filter((a) => zones.has(a));
       if (own) {
         v = own.row;
         bounds.set(n.id, [own.row, own.row]);
       } else if (held.length >= 2) {
-        const order = held.map((a) => anchoring!.ids.indexOf(a)).sort((x, y) => x - y);
-        const lo = zones.get(anchoring!.ids[order[0]])!.hi;
-        const hi = zones.get(anchoring!.ids[order[order.length - 1]])!.lo;
+        const order = held.map((a) => ids.indexOf(a)).sort((x, y) => x - y);
+        const first = zones.get(ids[order[0]])!;
+        const lastZ = zones.get(ids[order[order.length - 1]])!;
+        const lo = first.row + first.r;
+        const hi = lastZ.row - lastZ.r;
         v = (lo + hi) / 2 + (hash(n.id) - 0.5) * (hi - lo) * 0.8;
-        bounds.set(n.id, [lo + 3, hi - 3]);
+        bounds.set(n.id, [lo, hi]);
       } else if (held.length === 1) {
         const z = zones.get(held[0])!;
         const k = kids.get(held[0]) ?? 0;
         kids.set(held[0], k + 1);
-        const room = (z.hi - z.lo) / 2 - 6;
-        v = z.row + (k % 2 === 0 ? 1 : -1) * Math.min(room, STEP * (0.35 + 0.25 * n.ring)) * (0.5 + hash(n.id) * 0.5);
-        bounds.set(n.id, [z.lo + 3, z.hi - 3]);
+        const idx = ids.indexOf(held[0]);
+        // Beyond the anchor, away from the others: above the first, below the last.
+        const lo = idx === 0 ? z.lo + 3 : z.row + z.r;
+        const hi = idx === 0 ? z.row - z.r : z.hi - 3;
+        const far = Math.min(1, ((n.ring - 1) / 2) * 0.6 + hash(n.id) * 0.4);
+        v = idx === 0 ? hi - (hi - lo) * far : lo + (hi - lo) * far;
+        bounds.set(n.id, idx === 0 || idx === ids.length - 1 ? [lo, hi] : [z.lo + 3, z.hi - 3]);
+        if (idx !== 0 && idx !== ids.length - 1) v = z.row + (k % 2 === 0 ? 1 : -1) * Math.min((z.hi - z.lo) / 2 - 6, STEP * (0.35 + 0.25 * n.ring));
       }
     } else if (n.from) {
       const parent = at.get(n.from)!;
