@@ -10,7 +10,7 @@ type Lang = ReturnType<typeof useLang>["lang"];
 /**
  * The walk as a list, nearest first, in the picture's colours. A row lights its
  * bubble and, pressed, walks there. A node that touches several nearer ones
- * is opened under one and shown again, shut, under the others; the "+n" says so.
+ * is opened under one and shown again, shut, under the others.
  * A row carries no tip (`tips-check.mjs`): the box under the picture already says
  * what the lit thing is and why, and a tip here covered the picture.
  */
@@ -39,11 +39,6 @@ export function WalkList({ rows, height, lit, centre, onPoint, onLeave, onGo, t,
             <span className="truncate text-sm" style={{ flex: 1, minWidth: 0, fontWeight: n.id === centre || tag ? 600 : 400 }}>
               {nameOf(n)}
             </span>
-            {r.alsoUnder.length > 0 && (
-              <span className="text-xs text-muted-foreground" style={{ flex: "none" }}>
-                {t("walkAlso", { n: r.alsoUnder.length })}
-              </span>
-            )}
             <span className="text-xs text-muted-foreground" style={{ flex: "none" }}>
               {tag ? t("webNotes", { n: n.count }) : formatDateShort(n.at, lang)}
             </span>

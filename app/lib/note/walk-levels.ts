@@ -27,9 +27,9 @@ export function drawOrder<T extends { edge: WalkEdge }>(held: T[], ringOf: Map<s
 /** The strongest reasons first: a note link, a shared subject or thread, a tag's parent, a note's tag. */
 const REASON_ORDER: Record<WalkEdge["kind"], number> = { link: 0, subject: 1, theme: 1, under: 2, carries: 3 };
 
-/** Every line of the picture that touches one node, the strongest reason first. */
+/** Every line of the picture that touches one node and has a reason to read, the strongest first; a note carrying a tag is the tag chips already shown. */
 export function connectionsOf(walk: Walk, id: string): WalkEdge[] {
-  return walk.edges.filter((x) => x.a === id || x.b === id).sort((x, y) => REASON_ORDER[x.kind] - REASON_ORDER[y.kind] || x.id.localeCompare(y.id));
+  return walk.edges.filter((x) => x.kind !== "carries" && (x.a === id || x.b === id)).sort((x, y) => REASON_ORDER[x.kind] - REASON_ORDER[y.kind] || x.id.localeCompare(y.id));
 }
 
 /** What the box under the picture describes: the thing pointed at if it is in this walk, else the one walked from. */

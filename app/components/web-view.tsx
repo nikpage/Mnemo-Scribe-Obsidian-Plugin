@@ -582,7 +582,6 @@ function EdgeCard({ edge, walk, t }: { edge: WalkEdge; walk: Walk; t: T }) {
   const b = node(edge.b);
   if (!a || !b) return null;
   if (edge.kind === "under" && a.kind === "tag" && b.kind === "tag") return <p>{t("webParentKept", { tag: a.name, parent: b.name })}</p>;
-  if (edge.kind === "carries" && a.kind === "note" && b.kind === "tag") return <p>{t("walkCarries", { note: a.note.title, tag: b.name })}</p>;
   if (a.kind !== "note" || b.kind !== "note") return null;
   if (edge.kind === "link") {
     return (

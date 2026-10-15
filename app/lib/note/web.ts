@@ -71,6 +71,10 @@ export const EVIDENCE_MAX = 5;
  */
 export const SUBJECT_MAX_NOTES = 50;
 
+/** The word a fact uses for its speaker: two notes sharing it say nothing about each other. */
+const SELF_WORDS = new Set(["me", "i", "myself", "my", "já", "ja", "mě", "mne", "mně", "mi", "sám", "sama"]);
+export const isSelfSubject = (subject: string) => SELF_WORDS.has(subject.trim().toLowerCase());
+
 const refOf = (note: WebNote): NoteRef => ({ id: note.id, path: note.path, title: noteName(note.path || "", note.label).replace(/\.md$/, "") });
 
 /** Two notes whose areas share nothing, and what joins them. */
@@ -117,7 +121,7 @@ function bridgePairs(input: WebInput, parents: Parents): Pair[] {
     for (const [name, id] of rows) if (name && byId.has(id)) out.set(name, (out.get(name) ?? new Set()).add(id));
     return [...out.entries()].sort(([a], [b]) => a.localeCompare(b));
   };
-  for (const [subject, ids] of groups(input.facts.map((f) => [f.subject.trim(), f.recording_id]))) {
+  for (const [subject, ids] of groups(input.facts.filter((f) => !isSelfSubject(f.subject)).map((f) => [f.subject.trim(), f.recording_id]))) {
     if (ids.size > SUBJECT_MAX_NOTES) continue;
     const list = [...ids].sort();
     for (let i = 0; i < list.length; i++) for (let j = i + 1; j < list.length; j++) add(list[i], list[j], (x, y) => ({ kind: "subject", subject, notes: [x, y] }));

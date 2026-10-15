@@ -4,7 +4,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { noteName } from "@/lib/note/filing";
 import type { LinkType } from "@/lib/note/links";
 import { type Parents, type TagRow, parentsOf, under } from "@/lib/note/tag-tree";
-import { SUBJECT_MAX_NOTES, type NoteRef, type WebInput, type WebLink, type WebNote } from "@/lib/note/web";
+import { SUBJECT_MAX_NOTES, isSelfSubject, type NoteRef, type WebInput, type WebLink, type WebNote } from "@/lib/note/web";
 
 /**
  * The walk: a few steps out from one tag or note, never the whole store.
@@ -107,7 +107,7 @@ export function buildWalk(input: WebInput, centre: Centre): Walk | null {
       for (let i = 0; i < list.length; i++) for (let j = i + 1; j < list.length; j++) relate(list[i], list[j], { kind, why: null, name });
     }
   };
-  together("subject", groups(input.facts.map((f) => [f.subject.trim(), f.recording_id])));
+  together("subject", groups(input.facts.filter((f) => !isSelfSubject(f.subject)).map((f) => [f.subject.trim(), f.recording_id])));
   together("theme", groups(input.themes.flatMap((t) => t.evidence.map((id) => [t.name.trim(), id] as [string, string]))));
 
   const start = "tag" in centre ? (inUse(centre.tag) ? tagId(centre.tag) : null) : byId.has(centre.note) ? noteId(centre.note) : null;
@@ -238,7 +238,7 @@ export function storeOf(input: WebInput): WalkStore {
   if (input.notes.length > STORE_NOTES_MAX) return { more: true, rows: [], notes: [], links: [], facts: [], themes: [] };
   // Only what groups notes: a subject said by more notes than that joins nothing (`SUBJECT_MAX_NOTES`).
   const said = new Map<string, Set<string>>();
-  for (const f of input.facts) said.set(f.subject.trim(), (said.get(f.subject.trim()) ?? new Set()).add(f.recording_id));
+  for (const f of input.facts) if (!isSelfSubject(f.subject)) said.set(f.subject.trim(), (said.get(f.subject.trim()) ?? new Set()).add(f.recording_id));
   const facts: { recording_id: string; subject: string }[] = [];
   for (const [subject, ids] of said) if (subject && ids.size > 1 && ids.size <= SUBJECT_MAX_NOTES) for (const id of ids) facts.push({ recording_id: id, subject });
   // Named field by field: whatever a read returned beyond these never reaches the browser.
