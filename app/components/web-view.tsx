@@ -2,7 +2,8 @@
 
 // [Librarian, Guru]
 import { useEffect, useMemo, useRef, useState } from "react";
-import { allAnswered, useApi } from "@/lib/api";
+import { preload } from "swr";
+import { allAnswered, api, useApi } from "@/lib/api";
 import { useLang } from "@/hooks/use-lang";
 import { formatDateShort, formatFactDate } from "@/lib/format";
 import type { Walk, WalkEdge, WalkNode } from "@/lib/note/walk";
@@ -27,11 +28,12 @@ type Lang = ReturnType<typeof useLang>["lang"];
 const url = (at: Where | null) => (!at ? "/api/notes/walk" : "tag" in at ? `/api/notes/walk?tag=${encodeURIComponent(at.tag)}` : `/api/notes/walk?note=${encodeURIComponent(at.note)}`);
 const whereOf = (n: WalkNode): Where => (n.kind === "tag" ? { tag: n.name } : { note: n.note.id });
 const nameOf = (n: WalkNode) => (n.kind === "tag" ? `#${n.name}` : n.note.title);
-const ease = (x: number) => 1 - Math.pow(1 - x, 3);
-const GLIDE_MS = 700;
+/** Slow in, quick through the middle, slow out: no jolt at the start, no long tail at the end. */
+const ease = (x: number) => (x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2);
+const GLIDE_MS = 520;
 const DIM = 0.07;
 /** How long a pointer must rest on a bubble before it lights, and how long after leaving the picture before it lets go. */
-const REST_MS = 120;
+const REST_MS = 90;
 const LET_GO_MS = 400;
 
 function wantsStill(): boolean {
@@ -144,6 +146,8 @@ export function WebView() {
   const [picked, setPicked] = useState<string | null>(null);
   // A line of the lit bubble, pointed at to read why it is there.
   const [line, setLine] = useState<string | null>(null);
+  // The bubble just chosen: it stays lit through the wait and the glide, so the picture never flashes to everything at once.
+  const [held, setHeld] = useState<string | null>(null);
   const touch = useRef(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const cancelAim = () => {
@@ -151,15 +155,23 @@ export function WebView() {
     timer.current = null;
   };
   /** Lights `id` after the pointer has rested on it; crossing a crowd lights nothing on the way. */
-  const aim = (id: string | null, wait: number) => {
+  const aim = (id: string | null, wait: number, ahead?: Where) => {
     cancelAim();
-    timer.current = setTimeout(() => setHover(id), wait);
+    timer.current = setTimeout(() => {
+      setHover(id);
+      // What a click here would show is asked for now, so the click has nothing to wait on.
+      if (ahead) void preload(url(ahead), (key: string) => api<Walk>(key));
+    }, wait);
   };
   useEffect(() => cancelAim, []);
 
+  // The bubble chosen stays lit until the walk it asked for has arrived and settled, or has failed.
+  const settled = !!scene && !!held && scene.walk.centre === held && e >= 1;
+  const heldId = held && !settled && !res.error ? held : null;
+
   // What is lit: the thing pointed at and what touches it.
   const lit = useMemo(() => {
-    const id = hover ?? picked;
+    const id = hover ?? picked ?? heldId;
     if (!id || !walk) return null;
     const nodes = new Set<string>();
     const edges = new Set<string>();
@@ -176,7 +188,7 @@ export function WebView() {
       }
     }
     return { id, nodes, edges };
-  }, [hover, picked, walk]);
+  }, [hover, picked, heldId, walk]);
 
   if (!allAnswered(res)) return null;
 
@@ -199,6 +211,7 @@ export function WebView() {
     setHover(null);
     setPicked(null);
     setLine(null);
+    setHeld(node.id);
   };
   const back = () => {
     const last = trail[trail.length - 1];
@@ -209,6 +222,7 @@ export function WebView() {
     setHover(null);
     setPicked(null);
     setLine(null);
+    setHeld(null);
   };
 
   const pos = (d: Drawn) => {
@@ -332,6 +346,7 @@ export function WebView() {
                 <g
                   key={edge.id}
                   opacity={alpha}
+                  style={{ transition: e >= 1 ? "opacity 260ms ease" : "none" }}
                   onPointerEnter={() => {
                     const now = hover ?? picked;
                     const onNode = !!now && (now.startsWith("t:") || now.startsWith("n:"));
@@ -374,12 +389,12 @@ export function WebView() {
                     key={d.node.id}
                     transform={`translate(${p.x} ${p.y})`}
                     opacity={alpha}
-                    style={{ cursor: "pointer", outline: "none" }}
+                    style={{ cursor: "pointer", outline: "none", transition: e >= 1 ? "opacity 260ms ease" : "none" }}
                     role="button"
                     tabIndex={0}
                     aria-label={nameOf(d.node)}
                     onPointerEnter={(ev) => {
-                      if (ev.pointerType !== "touch") aim(d.node.id, REST_MS);
+                      if (ev.pointerType !== "touch") aim(d.node.id, REST_MS, whereOf(d.node));
                     }}
                     onPointerLeave={cancelAim}
                     onPointerDown={(ev) => {
