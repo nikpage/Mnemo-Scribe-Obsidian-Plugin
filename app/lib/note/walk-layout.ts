@@ -87,23 +87,16 @@ export function layoutWalk(walk: Walk, width: number, height: number, anchoring?
   // u runs along time, v across it.
   const U = along === "x" ? width : height;
   const V = along === "x" ? height : width;
-  const times = walk.nodes.map((n) => Date.parse(n.at)).filter((t) => Number.isFinite(t));
+  // Only notes have a date; a tag is placed from the notes it holds, below.
+  const times = walk.nodes.filter((n) => n.kind === "note").map((n) => Date.parse(n.at)).filter((t) => Number.isFinite(t));
   const from = times.length ? Math.min(...times) : null;
   const to = times.length ? Math.max(...times) : null;
   const span = from !== null && to !== null ? to - from : 0;
   const moments = slots(times);
   const last = moments.length ? moments[moments.length - 1].slot : 0;
-  // The centre sits in the middle; what is older is to its left and what is newer to its right,
-  // each side filling its own half however few notes it holds.
-  // With several anchors, the one in the middle by date.
-  const refId = multi ? [...anchoring!.ids].sort((a, b) => (walk.nodes.find((n) => n.id === a)?.at ?? "").localeCompare(walk.nodes.find((n) => n.id === b)?.at ?? ""))[Math.floor(anchoring!.ids.length / 2)] : walk.centre;
-  const centreAt = Date.parse(walk.nodes.find((n) => n.id === refId)?.at ?? "");
-  const centreSlot = moments.length ? (moments.find((m) => m.at === centreAt) ?? moments.reduce((best, m) => (Math.abs(m.at - centreAt) < Math.abs(best.at - centreAt) ? m : best))).slot : 0;
-  const half = U / 2 - MARGIN;
-  const slotAt = (slot: number) => {
-    if (slot <= centreSlot) return centreSlot > 0 ? U / 2 - ((centreSlot - slot) / centreSlot) * half : U / 2;
-    return last > centreSlot ? U / 2 + ((slot - centreSlot) / (last - centreSlot)) * half : U / 2;
-  };
+  // Every slot is the same step from the next, the whole width used: the picture is as wide as the
+  // notes need, whatever dates the oldest and the newest happen to have.
+  const slotAt = (slot: number) => (last > 0 ? MARGIN + (slot / last) * (U - 2 * MARGIN) : U / 2);
   const exact = new Map(moments.map((o) => [o.at, slotAt(o.slot)]));
   /** Where a moment falls: on its note's slot, or between the slots either side of it. */
   const place = (ms: number): number => {
@@ -147,10 +140,23 @@ export function layoutWalk(walk: Walk, width: number, height: number, anchoring?
     });
   }
 
+  // A tag stands where the notes it holds stand (else where its neighbouring tags do, else in the middle).
+  const uOf = new Map<string, number>();
+  for (const n of walk.nodes) {
+    const ms = Date.parse(n.at);
+    if (n.kind === "note" && Number.isFinite(ms)) uOf.set(n.id, place(ms));
+  }
+  for (let pass = 0; pass < 4; pass++) {
+    for (const n of walk.nodes) {
+      if (n.kind !== "tag" || uOf.has(n.id)) continue;
+      const near = walk.edges.flatMap((e) => (e.a === n.id ? [e.b] : e.b === n.id ? [e.a] : [])).filter((id) => uOf.has(id) && (pass > 0 || byId.get(id)?.kind === "note"));
+      if (near.length) uOf.set(n.id, near.reduce((sum, id) => sum + uOf.get(id)!, 0) / near.length);
+    }
+  }
+
   // Outward from the centre: a node starts a step to one side of the one it came from.
   for (const n of [...walk.nodes].sort((a, b) => a.ring - b.ring || a.id.localeCompare(b.id))) {
-    const ms = Date.parse(n.at);
-    const u = place(Number.isFinite(ms) ? ms : (from ?? 0));
+    const u = uOf.get(n.id) ?? U / 2;
     let v = V / 2;
     if (multi) {
       const own = zones.get(n.id);
