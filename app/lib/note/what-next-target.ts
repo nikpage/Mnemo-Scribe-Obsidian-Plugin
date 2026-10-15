@@ -132,6 +132,14 @@ export function flipTag(narrow: Narrow, tag: string): Narrow {
     : { ...narrow, not: narrow.not.filter((x) => x !== tag), only: [...narrow.only, tag] };
 }
 
+/**
+ * The narrowing a reading is made of: tags struck through in the Brain stay on
+ * screen but narrow nothing, so a reading's address and price ignore them.
+ */
+export function liveNarrow(narrow: Narrow, struck: string[]): Narrow {
+  return { ...narrow, only: narrow.only.filter((x) => !struck.includes(x)), not: narrow.not.filter((x) => !struck.includes(x)) };
+}
+
 /** A tag taken out of the narrowing, whichever way it narrowed. */
 export function dropTag(narrow: Narrow, tag: string): Narrow {
   return { ...narrow, only: narrow.only.filter((x) => x !== tag), not: narrow.not.filter((x) => x !== tag) };

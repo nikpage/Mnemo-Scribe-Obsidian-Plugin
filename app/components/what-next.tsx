@@ -9,7 +9,7 @@ import { busyUntilDone } from "@/lib/busy";
 import { useLang } from "@/hooks/use-lang";
 import { formatDate, formatFactDate, formatUsd } from "@/lib/format";
 import { inlineMarks, readingSections } from "@/lib/note/reading-sections";
-import { EVERYTHING, type Kind, type Narrow, type Scope, dropTag, flipTag, monthsBefore, readingOf, subjectOf } from "@/lib/note/what-next-target";
+import { EVERYTHING, type Kind, type Narrow, type Scope, dropTag, flipTag, liveNarrow, monthsBefore, readingOf, subjectOf } from "@/lib/note/what-next-target";
 import { Plus } from "lucide-react";
 import { tipOf } from "@/lib/tooltip";
 import { Button, Chip, Cost, Input, Options, Pill } from "@/components/ui";
@@ -268,6 +268,8 @@ export function BrainReading({
   const [job, setJob] = useState<Kind>("picture");
   const [topics, setTopics] = useState<string[]>([]);
   const [narrow, setNarrow] = useState<Narrow>({ only: within, not: [], from: "", to: "", ...(centre ? { centre: centre.id } : {}) });
+  // Tags struck through: still shown, narrowing nothing, until they are tapped back or removed.
+  const [struck, setStruck] = useState<string[]>([]);
   const [when, setWhen] = useState<When>("any");
   const [open, setOpen] = useState<"add" | "when" | null>(null);
   const [query, setQuery] = useState("");
@@ -277,7 +279,8 @@ export function BrainReading({
   const { data: suggested } = useApi<{ suggestions: Suggestion[] }>("/api/notes/what-next/suggest");
   // A reading of one note comes with that note's title.
   const { data: earlier } = useApi<{ readings: { id: string; scope: Scope; target: string; created_at: string; title?: string }[] }>("/api/notes/what-next?history=1");
-  const choice = { kind: job, topics, narrow };
+  const live = liveNarrow(narrow, struck);
+  const choice = { kind: job, topics, narrow: live };
   const wanted = readingOf(choice, centre?.title);
   // Priced on stand-in words: the wording never changes the price, so typing asks nothing.
   const priced = readingOf({ ...choice, topics: topics.length ? ["topic"] : [] }, "topic");
@@ -350,11 +353,17 @@ export function BrainReading({
             </Pill>
           ))}
           {[...narrow.only, ...narrow.not].map((tag) => (
-            <Pill key={tag} onClick={() => setNarrow(flipTag(narrow, tag))} onRemove={() => setNarrow(dropTag(narrow, tag))} removeLabel={t("brainRemove")} tip={t("tipBrainFlip")} removeTip={t("tipBrainRemove")}>
-              {t(narrow.only.includes(tag) ? "brainWith" : "brainWithout", { tag })}
-            </Pill>
+            struck.includes(tag) ? (
+              <Pill key={tag} onClick={() => setStruck(struck.filter((x) => x !== tag))} onRemove={() => { setStruck(struck.filter((x) => x !== tag)); setNarrow(dropTag(narrow, tag)); }} removeLabel={t("brainRemove")} tip={t("tipBrainStruck")} removeTip={t("tipBrainRemove")}>
+                <s>{t(narrow.only.includes(tag) ? "brainWith" : "brainWithout", { tag })}</s>
+              </Pill>
+            ) : (
+              <Pill key={tag} onClick={() => setNarrow(flipTag(narrow, tag))} onRemove={() => setStruck([...struck, tag])} removeLabel={t("brainStrike")} tip={t("tipBrainFlip")} removeTip={t("tipBrainStrike")}>
+                {t(narrow.only.includes(tag) ? "brainWith" : "brainWithout", { tag })}
+              </Pill>
+            )
           ))}
-          {topics.length === 0 && chosen.size === 0 && <span className="text-xs">{t("brainEverything")}</span>}
+          {topics.length === 0 && live.only.length + live.not.length === 0 && <span className="text-xs">{t("brainEverything")}</span>}
           {when === "any" ? (
             <Chip on={open === "when"} aria-expanded={open === "when"} tip={t("tipBrainWhenOpen")} onClick={() => setOpen(open === "when" ? null : "when")}>
               {whenLabel}
