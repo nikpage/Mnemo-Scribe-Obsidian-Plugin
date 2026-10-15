@@ -25,6 +25,8 @@ export const RINGS = 3;
 export const RING_MAX = [1, 12, 18, 14];
 /** What one node sends on to the next ring. */
 const TAG_OUT = { tags: 5, notes: 6 };
+/** The most notes one walk shows, nearest first; the furthest ring is dropped first. */
+export const NOTES_MAX = 40;
 const NOTE_OUT = { tags: 3, notes: 4 };
 
 export type WalkNode =
@@ -185,7 +187,34 @@ export function buildWalk(input: WebInput, centre: Centre): Walk | null {
     }
   }
 
-  return { centre: start, nodes: [...nodes.values()], edges };
+  return capNotes({ centre: start, nodes: [...nodes.values()], edges }, NOTES_MAX);
+}
+
+/**
+ * A walk with at most `max` notes: the nearest stay (nodes are held nearest
+ * ring first), the furthest go, and with them whatever then no line reaches
+ * from the centre and every line to what went.
+ */
+export function capNotes(walk: Walk, max: number): Walk {
+  let notes = 0;
+  const kept = new Set<string>();
+  for (const n of walk.nodes) {
+    if (n.kind === "note" && ++notes > max) continue;
+    kept.add(n.id);
+  }
+  if (kept.size === walk.nodes.length) return walk;
+  const edges = walk.edges.filter((e) => kept.has(e.a) && kept.has(e.b));
+  const reached = new Set([walk.centre]);
+  for (let grew = true; grew; ) {
+    grew = false;
+    for (const e of edges) {
+      if (reached.has(e.a) !== reached.has(e.b)) {
+        reached.add(e.a).add(e.b);
+        grew = true;
+      }
+    }
+  }
+  return { centre: walk.centre, nodes: walk.nodes.filter((n) => kept.has(n.id) && reached.has(n.id)), edges: edges.filter((e) => reached.has(e.a) && reached.has(e.b)) };
 }
 
 /** The first sentence of a summary, cut short enough for a hover. */

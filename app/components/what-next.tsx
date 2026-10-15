@@ -9,7 +9,7 @@ import { busyUntilDone } from "@/lib/busy";
 import { useLang } from "@/hooks/use-lang";
 import { formatDate, formatFactDate, formatUsd } from "@/lib/format";
 import { inlineMarks, readingSections } from "@/lib/note/reading-sections";
-import { EVERYTHING, type Kind, type Narrow, type Scope, dropTag, flipTag, liveNarrow, monthsBefore, readingOf, subjectOf } from "@/lib/note/what-next-target";
+import { EVERYTHING, type Kind, type Narrow, type Scope, dropTag, flipTag, liveNarrow, monthsBefore, readingOf, startOf, subjectOf } from "@/lib/note/what-next-target";
 import { Plus } from "lucide-react";
 import { tipOf } from "@/lib/tooltip";
 import { Button, Chip, Cost, Input, Options, Pill } from "@/components/ui";
@@ -238,13 +238,13 @@ export function WhatNext({ scope, target = "" }: { scope: "overview" | "tags" | 
  * on `centreId` when a note is open. The app's Brain panel and the plugins'
  * Brain tab are both this. Drawn once both are in.
  */
-export function BrainOf({ within, centreId }: { within?: string[]; centreId?: string }) {
+export function BrainOf({ within, struck, alone, centreId }: { within?: string[]; struck?: string[]; alone?: boolean; centreId?: string }) {
   const counts = useCounts();
   const centre = useApi<{ recordings: { id: string; path: string }[] }>(centreId ? `/api/recordings?ids=${centreId}` : null);
   const tags = useMemo(() => tagsByUse(counts.data?.sets ?? []), [counts.data]);
   if (!allAnswered(counts, centreId ? centre : { data: null })) return null;
   const here = centre.data?.recordings[0];
-  return <BrainReading tags={tags} within={within} centre={here ? { id: here.id, title: here.path } : undefined} />;
+  return <BrainReading tags={tags} within={within} struck={struck} alone={alone} centre={here ? { id: here.id, title: here.path } : undefined} />;
 }
 
 /**
@@ -258,18 +258,25 @@ export function BrainOf({ within, centreId }: { within?: string[]; centreId?: st
 export function BrainReading({
   tags,
   within = [],
+  struck: struckAtStart,
+  alone,
   centre,
 }: {
   tags: string[];
   within?: string[];
+  /** Tags that start struck through (still shown, read as nothing). */
+  struck?: string[];
+  /** Starts on "Only these notes". */
+  alone?: boolean;
   centre?: { id: string; title: string };
 }) {
   const { lang, t } = useLang();
   const [job, setJob] = useState<Kind>("picture");
   const [topics, setTopics] = useState<string[]>([]);
-  const [narrow, setNarrow] = useState<Narrow>({ only: within, not: [], from: "", to: "", ...(centre ? { centre: centre.id } : {}) });
+  const [start] = useState(() => startOf(within, { struck: struckAtStart, alone, centre: centre?.id }));
+  const [narrow, setNarrow] = useState<Narrow>(start.narrow);
   // Tags struck through: still shown, narrowing nothing, until they are tapped back or removed.
-  const [struck, setStruck] = useState<string[]>([]);
+  const [struck, setStruck] = useState<string[]>(start.struck);
   const [when, setWhen] = useState<When>("any");
   const [open, setOpen] = useState<"add" | "when" | null>(null);
   const [query, setQuery] = useState("");

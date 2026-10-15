@@ -8,11 +8,13 @@ import { useLang } from "@/hooks/use-lang";
 import { formatDateShort, formatFactDate } from "@/lib/format";
 import { type Walk, type WalkEdge, type WalkNode, type WalkStore, WALK_STORE_URL, buildWalk, defaultCentre, inputOf } from "@/lib/note/walk";
 import { type Layout, type Side, layoutWalk } from "@/lib/note/walk-layout";
-import { LEVEL_WIDTH, connectionsOf, drawOrder, levelColour, levelOfRing, listOf, nameOf, shownOf } from "@/lib/note/walk-levels";
+import { LEVEL_WIDTH, connectionsOf, drawOrder, isStruck, levelColour, levelOfRing, listOf, nameOf, shownOf } from "@/lib/note/walk-levels";
 import { WalkList } from "@/components/walk-list";
 import { NoteLink } from "@/components/note-link";
 import { PHRASE } from "@/components/note-links";
 import { Button, Notice } from "@/components/ui";
+import { showPicture } from "@/lib/note/web-picture";
+import type { WebSet } from "@/lib/note/web-set";
 
 /**
  * The walk (`lib/note/walk.ts`): the notes a few steps out from one tag or
@@ -34,6 +36,7 @@ const whereOf = (n: WalkNode): Where => (n.kind === "tag" ? { tag: n.name } : { 
 /** Slow in, quick through the middle, slow out: no jolt at the start, no long tail at the end. */
 const ease = (x: number) => (x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2);
 const GLIDE_MS = 520;
+const NO_TAGS: string[] = [];
 const DIM = 0.07;
 /** How long a pointer must rest on a bubble before it lights, and how long after leaving the picture before it lets go. */
 const REST_MS = 90;
@@ -122,21 +125,47 @@ function curve(ax: number, ay: number, bx: number, by: number, bow: number): str
   return `M${ax} ${ay} Q${mx - dy * bow} ${my + dx * bow} ${bx} ${by}`;
 }
 
-export function WebView() {
+/**
+ * The Web: one walk for each tag in the set in the address (`?set=`), stacked,
+ * each with its own orange centre and its own list; a bare address is the one
+ * walk from the tag with most notes.
+ */
+export function WebView({ set }: { set?: WebSet }) {
+  const anchors = set?.live ?? [];
+  const struck = set?.struck ?? NO_TAGS;
+  if (!anchors.length) return <WalkPanel anchor={null} multi={false} struck={struck} />;
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 40 }}>
+      {anchors.map((tag) => (
+        <WalkPanel key={tag} anchor={tag} multi={anchors.length > 1} struck={struck} />
+      ))}
+    </div>
+  );
+}
+
+/** One walk, started on `anchor` (a tag of the set) or on the usual centre; a walk taken since goes where it was taken. */
+function WalkPanel({ anchor, multi, struck: struckTags }: { anchor: string | null; multi: boolean; struck: string[] }) {
   const { t, lang } = useLang();
+  const struck = useMemo(() => new Set(struckTags), [struckTags]);
   const [at, setAt] = useState<Where | null>(null);
+  const first = anchor ?? undefined;
+  const start: Where | null = at ?? (first ? { tag: first } : null);
   const [trail, setTrail] = useState<{ at: Where | null; name: string }[]>([]);
   // The walk is worked out here from a slim copy of the store (names, dates, tags, links; no text), so a
   // click needs no server. A store too large to send is walked by the server, one click at a time.
   const store = useApi<WalkStore>(WALK_STORE_URL, { revalidateOnFocus: false, keepPreviousData: true });
   const serverMode = store.data?.more === true;
-  const remote = useApi<Walk>(serverMode ? url(at) : null, { keepPreviousData: true });
+  const remote = useApi<Walk>(serverMode ? url(start) : null, { keepPreviousData: true });
   const input = useMemo(() => (store.data && !store.data.more ? inputOf(store.data) : null), [store.data]);
   const here = useMemo(() => {
     if (!input) return null;
-    const from = at ?? defaultCentre(input);
-    return from ? buildWalk(input, from) : null;
-  }, [input, at]);
+    const from = at ?? (first ? { tag: first } : null);
+    // A set's tag no note carries any more falls back to the usual centre.
+    const asked = from ? buildWalk(input, from) : null;
+    if (asked) return asked;
+    const usual = defaultCentre(input);
+    return usual ? buildWalk(input, usual) : null;
+  }, [input, at, first]);
   const res = serverMode ? remote : store;
   const walk = serverMode ? (remote.data ?? null) : here;
 
@@ -224,6 +253,14 @@ export function WebView() {
   }, [hover, picked, walk]);
 
   if (lit && lit.id !== kept) setKept(lit.id);
+
+  // The left tag list wears this walk's colours for the tags it shows.
+  useEffect(() => {
+    if (!walk) return;
+    const key = anchor ?? "";
+    showPicture(key, new Map(walk.nodes.flatMap((n) => (n.kind === "tag" ? [[n.name, n.ring] as [string, number]] : []))));
+    return () => showPicture(key, null);
+  }, [walk, anchor]);
 
   if (!allAnswered(res)) return null;
 
@@ -384,7 +421,8 @@ export function WebView() {
                 const isCentre = d.node.id === walk.centre;
                 const tag = d.node.kind === "tag";
                 const colour = levelColour(levelOfRing(d.node.ring));
-                const alpha = p.a * dimOf(d.node.id, "node") * (d.node.ring >= 3 ? 0.75 : 1);
+                const crossed = isStruck(d.node, struck);
+                const alpha = p.a * dimOf(d.node.id, "node") * (d.node.ring >= 3 ? 0.75 : 1) * (crossed ? 0.6 : 1);
                 const open = (ev: React.MouseEvent) => {
                   ev.stopPropagation();
                   if (touch.current && picked !== d.node.id) setPicked(d.node.id);
@@ -425,7 +463,7 @@ export function WebView() {
                       strokeWidth={isCentre ? 3 : 1.6}
                     />
                     {tag && d.node.kind === "tag" && (
-                      <text textAnchor="middle" dy="0.35em" fontSize={Math.max(11, Math.min(15, d.r * 0.7))} fontWeight={600} className="fill-current">
+                      <text textAnchor="middle" dy="0.35em" fontSize={Math.max(11, Math.min(15, d.r * 0.7))} fontWeight={600} className="fill-current" textDecoration={crossed ? "line-through" : undefined}>
                         {d.node.count}
                       </text>
                     )}
@@ -440,6 +478,7 @@ export function WebView() {
                         strokeWidth={4}
                         paintOrder="stroke"
                         strokeLinejoin="round"
+                        textDecoration={crossed ? "line-through" : undefined}
                       >
                         {d.label}
                       </text>
@@ -456,7 +495,7 @@ export function WebView() {
       <div style={{ height: STRIP_H }} className="mt-2" aria-live="polite" onPointerEnter={cancelAim} onPointerLeave={() => aim(null, LET_GO_MS)}>
         {stripNode && (
           <div className="overflow-y-auto rounded-2xl border border-border bg-card p-3 text-sm" style={{ maxHeight: STRIP_H }}>
-            {stripNode.kind === "note" ? <NoteCard node={stripNode} summary={summaryOf(stripNode)} lang={lang} t={t} /> : <TagCard node={stripNode} t={t} />}
+            {stripNode.kind === "note" ? <NoteCard node={stripNode} summary={summaryOf(stripNode)} lang={lang} t={t} /> : <TagCard node={stripNode} crossed={isStruck(stripNode, struck)} t={t} />}
             <Connections node={stripNode} walk={walk} t={t} />
           </div>
         )}
@@ -488,7 +527,7 @@ export function WebView() {
             {t("walkBack", { name: trail[trail.length - 1].name })}
           </Button>
         )}
-        <h1 className="text-2xl font-bold">{nameOf(centre)}</h1>
+        {multi ? <h2 className="text-2xl font-bold">{nameOf(centre)}</h2> : <h1 className="text-2xl font-bold">{nameOf(centre)}</h1>}
         <span className="text-sm text-muted-foreground">
           {centre.kind === "tag" ? t("webNotes", { n: centre.count }) : formatDateShort(centre.at, lang)}
         </span>
@@ -504,7 +543,7 @@ export function WebView() {
       {beside ? (
         <div style={{ display: "grid", gridTemplateColumns: `minmax(0, 1fr) ${SIDE_W}px`, gap: 16, alignItems: "start" }}>
           <div style={{ minWidth: 0 }}>{picture}</div>
-          <WalkList rows={rows} height={height} lit={lit?.nodes ?? null} centre={walk.centre} onPoint={point} onLeave={() => aim(null, LET_GO_MS)} onGo={go} t={t} lang={lang} />
+          <WalkList rows={rows} height={height} struck={struck} lit={lit?.nodes ?? null} centre={walk.centre} onPoint={point} onLeave={() => aim(null, LET_GO_MS)} onGo={go} t={t} lang={lang} />
         </div>
       ) : (
         <div>
@@ -523,7 +562,7 @@ export function WebView() {
           >
             <div style={{ flex: "0 0 100%", minWidth: 0, scrollSnapAlign: "start" }}>{picture}</div>
             <div style={{ flex: "0 0 100%", minWidth: 0, scrollSnapAlign: "start" }}>
-              <WalkList rows={rows} height={height} lit={lit?.nodes ?? null} centre={walk.centre} onPoint={point} onLeave={() => aim(null, LET_GO_MS)} onGo={(n) => { showPage(0); go(n); }} t={t} lang={lang} />
+              <WalkList rows={rows} height={height} struck={struck} lit={lit?.nodes ?? null} centre={walk.centre} onPoint={point} onLeave={() => aim(null, LET_GO_MS)} onGo={(n) => { showPage(0); go(n); }} t={t} lang={lang} />
             </div>
           </div>
         </div>
@@ -548,11 +587,11 @@ function NoteCard({ node, summary, lang, t }: { node: Extract<WalkNode, { kind: 
   );
 }
 
-function TagCard({ node, t }: { node: Extract<WalkNode, { kind: "tag" }>; t: T }) {
+function TagCard({ node, crossed, t }: { node: Extract<WalkNode, { kind: "tag" }>; crossed: boolean; t: T }) {
   return (
     <div>
       <p className="font-medium">
-        #{node.name} <span className="text-muted-foreground" style={{ fontWeight: 400 }}>· {t("webNotes", { n: node.count })}</span>
+        <span style={{ textDecoration: crossed ? "line-through" : undefined }}>#{node.name}</span> <span className="text-muted-foreground" style={{ fontWeight: 400 }}>· {t("webNotes", { n: node.count })}</span>
       </p>
       {node.meaning && <p className="text-muted-foreground">{node.meaning}</p>}
     </div>

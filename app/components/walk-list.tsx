@@ -2,7 +2,7 @@
 import type { useLang } from "@/hooks/use-lang";
 import { formatDateShort } from "@/lib/format";
 import type { WalkNode } from "@/lib/note/walk";
-import { LEVEL_WIDTH, type Row, levelColour, nameOf } from "@/lib/note/walk-levels";
+import { LEVEL_WIDTH, type Row, isStruck, levelColour, nameOf } from "@/lib/note/walk-levels";
 
 type T = ReturnType<typeof useLang>["t"];
 type Lang = ReturnType<typeof useLang>["lang"];
@@ -14,7 +14,7 @@ type Lang = ReturnType<typeof useLang>["lang"];
  * A row carries no tip (`tips-check.mjs`): the box under the picture already says
  * what the lit thing is and why, and a tip here covered the picture.
  */
-export function WalkList({ rows, height, lit, centre, onPoint, onLeave, onGo, t, lang }: { rows: Row[]; height: number; lit: Set<string> | null; centre: string; onPoint: (id: string) => void; onLeave: () => void; onGo: (n: WalkNode) => void; t: T; lang: Lang }) {
+export function WalkList({ rows, height, lit, struck, centre, onPoint, onLeave, onGo, t, lang }: { rows: Row[]; height: number; struck: ReadonlySet<string>; lit: Set<string> | null; centre: string; onPoint: (id: string) => void; onLeave: () => void; onGo: (n: WalkNode) => void; t: T; lang: Lang }) {
   return (
     <div className="overflow-y-auto rounded-2xl border border-border bg-card" style={{ maxHeight: height }} onPointerLeave={onLeave}>
       {rows.map((r, i) => {
@@ -36,7 +36,7 @@ export function WalkList({ rows, height, lit, centre, onPoint, onLeave, onGo, t,
             onKeyDown={(ev) => ev.key === "Enter" && n.id !== centre && onGo(n)}
           >
             <span aria-hidden style={{ flex: "none", width: 10, height: 10, borderRadius: "50%", boxSizing: "border-box", border: `2px solid ${colour}`, background: tag ? "transparent" : colour }} />
-            <span className="truncate text-sm" style={{ flex: 1, minWidth: 0, fontWeight: n.id === centre || tag ? 600 : 400 }}>
+            <span className="truncate text-sm" style={{ flex: 1, minWidth: 0, fontWeight: n.id === centre || tag ? 600 : 400, textDecoration: isStruck(n, struck) ? "line-through" : undefined }}>
               {nameOf(n)}
             </span>
             <span className="text-xs text-muted-foreground" style={{ flex: "none" }}>

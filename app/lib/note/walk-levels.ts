@@ -49,6 +49,9 @@ export type Row = {
   alsoUnder: { id: string; name: string }[];
 };
 
+/** A tag the person struck through in the set: still drawn and listed, crossed out. Only a tag can be. */
+export const isStruck = (n: WalkNode, struck: ReadonlySet<string>): boolean => n.kind === "tag" && struck.has(n.name);
+
 export const nameOf = (n: WalkNode) => (n.kind === "tag" ? `#${n.name}` : n.note.title);
 
 /**

@@ -140,6 +140,17 @@ export function liveNarrow(narrow: Narrow, struck: string[]): Narrow {
   return { ...narrow, only: narrow.only.filter((x) => !struck.includes(x)), not: narrow.not.filter((x) => !struck.includes(x)) };
 }
 
+/**
+ * What the Brain starts with. Opened from the Web it starts on the set: its
+ * tags, the struck ones among them still shown but struck, and only those
+ * notes read (`alone`). Opened anywhere else, `struck` and `alone` are empty.
+ */
+export function startOf(within: string[], opts: { struck?: string[]; alone?: boolean; centre?: string } = {}): { narrow: Narrow; struck: string[] } {
+  const struck = normalizeTags(opts.struck || []).filter((tag) => !within.includes(tag));
+  const narrow: Narrow = { only: [...within, ...struck], not: [], from: "", to: "", ...(opts.centre ? { centre: opts.centre } : {}), ...(opts.alone ? { alone: true } : {}) };
+  return { narrow, struck };
+}
+
 /** A tag taken out of the narrowing, whichever way it narrowed. */
 export function dropTag(narrow: Narrow, tag: string): Narrow {
   return { ...narrow, only: narrow.only.filter((x) => x !== tag), not: narrow.not.filter((x) => x !== tag) };
