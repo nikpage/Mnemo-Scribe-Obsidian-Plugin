@@ -18,6 +18,10 @@ const COMMON_WEIGHT = 1.6;
 export const WIDE = 640;
 
 export type Side = "below" | "above" | "right" | "left";
+/** Where a node's in-both / only-here mark sits from its centre: up and to the right, down there when the name is written above. */
+export function markAt(r: number, named: Side | null): { dx: number; dy: number } {
+  return { dx: r + 8, dy: named === "above" ? r + 8 : -(r + 8) };
+}
 export type Placed = { id: string; x: number; y: number; r: number; /** Its name is written on this side of it, or nowhere. */ named: Side | null; label: string };
 /** `at` is the place along the time axis. */
 export type Tick = { at: number; iso: string; kind: "month" | "year" };

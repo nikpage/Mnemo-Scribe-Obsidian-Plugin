@@ -7,7 +7,7 @@ import { allAnswered, api, useApi } from "@/lib/api";
 import { useLang } from "@/hooks/use-lang";
 import { formatDateShort, formatFactDate } from "@/lib/format";
 import { type Walk, type WalkEdge, type WalkNode, type WalkStore, WALK_STORE_URL, buildWalk, defaultCentre, inputOf } from "@/lib/note/walk";
-import { type Layout, type Side, layoutWalk } from "@/lib/note/walk-layout";
+import { type Layout, type Side, layoutWalk, markAt } from "@/lib/note/walk-layout";
 import { type Share, mergeWalks } from "@/lib/note/walk-set";
 import { LEVEL_WIDTH, type Row, connectionsOf, drawOrder, isStruck, levelColour, levelOfRing, listOf, nameOf, shownOf } from "@/lib/note/walk-levels";
 import { ShareGlyph, ShareMark, WalkList } from "@/components/walk-list";
@@ -498,7 +498,7 @@ function WalkPanel({ anchorKey, struck: struckTags }: { anchorKey: string; struc
                       strokeWidth={isCentre ? 3 : 1.6}
                     />
                     {shares.get(d.node.id) && (
-                      <g transform={`translate(${d.r + 8} ${-(d.r + 8)})`} className="text-muted-foreground">
+                      <g transform={`translate(${markAt(d.r, d.named).dx} ${markAt(d.r, d.named).dy})`} className="text-muted-foreground">
                         <ShareGlyph share={shares.get(d.node.id)!} />
                       </g>
                     )}
