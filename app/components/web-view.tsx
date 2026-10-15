@@ -1,13 +1,14 @@
 "use client";
 
 // [Librarian, Guru]
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { preload } from "swr";
 import { allAnswered, api, useApi } from "@/lib/api";
 import { useLang } from "@/hooks/use-lang";
 import { formatDateShort, formatFactDate } from "@/lib/format";
 import { type Walk, type WalkEdge, type WalkNode, type WalkStore, WALK_STORE_URL, buildWalk, defaultCentre, inputOf } from "@/lib/note/walk";
 import { type Layout, type Side, layoutWalk } from "@/lib/note/walk-layout";
+import { LEVEL_WIDTH, type Row, edgeLevel, levelColour, levelOfRing, listOf } from "@/lib/note/walk-levels";
 import { NoteLink } from "@/components/note-link";
 import { PHRASE } from "@/components/note-links";
 import { Button, Notice } from "@/components/ui";
@@ -17,8 +18,10 @@ import { Button, Notice } from "@/components/ui";
  * note, time running along one axis, a tag's size its notes. Hover a thing and
  * what it touches stays lit, with its summary or its reason beside it; tap a
  * thing to walk there and the picture glides to the new neighbourhood. Drawn
- * as SVG so that the app and both plugins' panels draw the same picture. Free
- * of Next and server code.
+ * as SVG so that the app and both plugins' panels draw the same picture. Beside
+ * it (under it on a phone, one swipe away) a list of the same walk, whose rows
+ * light and walk the picture. Three levels, three colours (`walk-levels.ts`).
+ * Free of Next and server code.
  */
 
 type Where = { tag: string } | { note: string };
@@ -35,6 +38,9 @@ const DIM = 0.07;
 /** How long a pointer must rest on a bubble before it lights, and how long after leaving the picture before it lets go. */
 const REST_MS = 90;
 const LET_GO_MS = 400;
+/** Room for the list beside the picture. */
+const SIDE_MIN = 980;
+const SIDE_W = 340;
 
 function wantsStill(): boolean {
   try {
@@ -150,7 +156,28 @@ export function WebView() {
     ro.observe(stage);
     return () => ro.disconnect();
   }, [stage]);
-  const height = width >= 640 ? Math.max(420, Math.min(640, Math.round(width * 0.52))) : Math.max(480, Math.min(780, Math.round(width * 1.4)));
+  const height = width >= 640 ? Math.max(420, Math.min(720, Math.round(width * 0.52))) : Math.max(480, Math.min(780, Math.round(width * 1.4)));
+
+  // Whether there is room for the list beside the picture, measured before the first paint.
+  const [outer, setOuter] = useState<HTMLDivElement | null>(null);
+  const [room, setRoom] = useState(0);
+  useLayoutEffect(() => {
+    if (!outer) return;
+    const measure = () => setRoom(Math.round(outer.clientWidth));
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(outer);
+    return () => ro.disconnect();
+  }, [outer]);
+  const beside = room >= SIDE_MIN;
+  // Narrow: the picture and the list are two pages side by side, swiped between.
+  const pager = useRef<HTMLDivElement | null>(null);
+  const [page, setPage] = useState(0);
+  const showPage = (n: number) => {
+    const el = pager.current;
+    if (el) el.scrollTo({ left: n * el.clientWidth, behavior: wantsStill() ? "auto" : "smooth" });
+    setPage(n);
+  };
 
   const layout = useMemo(() => (walk && width > 0 ? layoutWalk(walk, width, height) : null), [walk, width, height]);
   const { scene, e } = useGlide(walk, layout);
@@ -210,7 +237,7 @@ export function WebView() {
     const gone = res.error && typeof res.error === "object" && "status" in res.error && (res.error as { status: number }).status === 404;
     const empty = !res.error && !walk;
     return (
-      <div>
+      <div ref={setOuter}>
         <h1 className="mb-2 text-2xl font-bold">{t("webTitle")}</h1>
         {res.error || empty ? <Notice tone={empty || gone ? "info" : "error"}>{empty || gone ? t("webEmpty") : t("webFailed")}</Notice> : <div ref={setStage} className="w-full" />}
       </div>
@@ -258,27 +285,15 @@ export function WebView() {
   const stripEdge = stripId && !stripNode ? (walk.edges.find((x) => x.id === stripId) ?? null) : null;
   const ringOf = new Map(walk.nodes.map((n) => [n.id, n.ring]));
 
-  return (
-    <div>
-      <div className="mb-3 flex flex-wrap items-center gap-3">
-        {trail.length > 0 && (
-          <Button size="sm" variant="secondary" tip={trail[trail.length - 1].name} onClick={back}>
-            {t("walkBack", { name: trail[trail.length - 1].name })}
-          </Button>
-        )}
-        <h1 className="text-2xl font-bold">{nameOf(centre)}</h1>
-        <span className="text-sm text-muted-foreground">
-          {centre.kind === "tag" ? t("webNotes", { n: centre.count }) : formatDateShort(centre.at, lang)}
-        </span>
-        {centre.kind === "note" && (
-          <NoteLink note={centre.note} className="ml-auto text-sm font-medium hover:underline">
-            {t("walkOpen")}
-          </NoteLink>
-        )}
-        {centre.kind === "tag" && centre.meaning && <p className="w-full text-sm text-muted-foreground">{centre.meaning}</p>}
-        {centre.kind === "note" && summaryOf(centre) && <p className="w-full text-sm text-muted-foreground">{summaryOf(centre)}</p>}
-      </div>
+  const rows = listOf(walk);
+  // A row pointed at lights its bubble as a bubble does, at once; a list has no crowd to cross.
+  const point = (id: string) => {
+    cancelAim();
+    setHover(id);
+  };
 
+  const picture = (
+    <>
       <div
         ref={setStage}
         className="w-full overflow-hidden rounded-2xl border border-border bg-card"
@@ -355,16 +370,10 @@ export function WebView() {
               if (!a || !b) return null;
               const alpha = (mode === "leave" ? 1 - e : mode === "enter" ? e : 1) * dimOf(edge.id, "edge");
               const d = curve(a.x, a.y, b.x, b.y, edge.kind === "under" ? 0.08 : 0.14);
-              // One colour for what is near the centre, grey for two steps, lighter grey for three; a lit line is always teal.
-              const reach = Math.max(ringOf.get(edge.a) ?? 0, ringOf.get(edge.b) ?? 0);
-              const near = edge.kind === "link"
-                ? { className: "stroke-primary", width: 2.2, dash: undefined }
-                : edge.kind === "under"
-                  ? { className: "stroke-muted-foreground", width: 1.6, dash: undefined }
-                  : edge.kind === "carries"
-                    ? { className: "stroke-primary/60", width: 1.2, dash: undefined }
-                    : { className: "stroke-muted-foreground", width: 1.4, dash: "1 6" };
-              const look = lit?.edges.has(edge.id) || reach <= 1 ? near : reach === 2 ? { ...near, className: "stroke-muted-foreground" } : { ...near, className: "stroke-border", width: near.width * 0.85 };
+              // A line takes the level of its nearer end; what is lit is heavier, never another colour.
+              const level = edgeLevel(edge, ringOf);
+              const dotted = edge.kind === "subject" || edge.kind === "theme";
+              const heavy = lit?.edges.has(edge.id) ? 1.4 : 1;
               return (
                 <g
                   key={edge.id}
@@ -390,7 +399,7 @@ export function WebView() {
                   }}
                 >
                   <path d={d} fill="none" stroke="transparent" strokeWidth={16} />
-                  <path d={d} fill="none" className={look.className} strokeWidth={look.width * (lit?.edges.has(edge.id) ? 1.5 : 1)} strokeLinecap="round" strokeDasharray={look.dash} />
+                  <path d={d} fill="none" style={{ stroke: levelColour(level) }} strokeWidth={LEVEL_WIDTH[level] * heavy} strokeLinecap="round" strokeDasharray={dotted ? "1 7" : undefined} />
                 </g>
               );
             })}
@@ -401,7 +410,7 @@ export function WebView() {
                 const p = where.get(d.node.id)!;
                 const isCentre = d.node.id === walk.centre;
                 const tag = d.node.kind === "tag";
-                const far = d.node.ring >= 2;
+                const colour = levelColour(levelOfRing(d.node.ring));
                 const alpha = p.a * dimOf(d.node.id, "node") * (d.node.ring >= 3 ? 0.75 : 1);
                 const open = (ev: React.MouseEvent) => {
                   ev.stopPropagation();
@@ -428,30 +437,18 @@ export function WebView() {
                     onKeyDown={(ev) => ev.key === "Enter" && go(d.node)}
                   >
                     <circle r={Math.max(d.r + 6, 18)} fill="transparent" />
-                    <circle
-                      r={d.r + (isCentre ? 12 : 7)}
-                      className={far ? "fill-current text-muted-foreground" : "fill-primary/30"}
-                      fillOpacity={far ? 0.3 : undefined}
-                      filter="url(#walk-glow)"
-                    />
+                    <circle r={d.r + (isCentre ? 12 : 7)} style={{ fill: colour }} fillOpacity={0.3} filter="url(#walk-glow)" />
                     {pending === d.node.id && (
-                      <circle r={d.r + 10} fill="none" className="stroke-primary" strokeWidth={2}>
+                      <circle r={d.r + 10} fill="none" style={{ stroke: colour }} strokeWidth={2}>
                         {!wantsStill() && <animate attributeName="opacity" values="0.9;0.25;0.9" dur="0.9s" repeatCount="indefinite" />}
                       </circle>
                     )}
-                    {isCentre && scene.moved && e < 1 && <circle r={d.r + 8 + 46 * e} fill="none" className="stroke-primary" strokeWidth={2} opacity={0.7 * (1 - e)} />}
+                    {isCentre && scene.moved && e < 1 && <circle r={d.r + 8 + 46 * e} fill="none" style={{ stroke: colour }} strokeWidth={2} opacity={0.7 * (1 - e)} />}
                     <circle
                       r={d.r}
-                      className={
-                        far
-                          ? tag
-                            ? "fill-current text-muted-foreground stroke-muted-foreground"
-                            : "fill-current text-muted-foreground stroke-card"
-                          : tag
-                            ? "fill-primary/15 stroke-primary"
-                            : "fill-primary stroke-card"
-                      }
-                      fillOpacity={far && tag ? 0.15 : undefined}
+                      className={tag ? undefined : "stroke-card"}
+                      style={tag ? { fill: colour, stroke: colour } : { fill: colour }}
+                      fillOpacity={tag ? 0.15 : undefined}
                       strokeWidth={isCentre ? 3 : 1.6}
                     />
                     {tag && d.node.kind === "tag" && (
@@ -501,18 +498,116 @@ export function WebView() {
 
       <div className="mt-2 flex flex-wrap gap-3 text-xs text-muted-foreground">
         {[
-          { text: t("walkKeyUnder"), stroke: "stroke-muted-foreground", dash: undefined, width: 2 },
-          { text: t("walkKeyLink"), stroke: "stroke-primary", dash: undefined, width: 2.4 },
-          { text: t("walkKeyShared"), stroke: "stroke-muted-foreground", dash: "1 5", width: 2 },
+          { text: t("walkKeyHere"), colour: levelColour(1), width: LEVEL_WIDTH[1], dash: undefined },
+          { text: t("walkKeyNear"), colour: levelColour(2), width: LEVEL_WIDTH[2], dash: undefined },
+          { text: t("walkKeyFar"), colour: levelColour(3), width: LEVEL_WIDTH[3], dash: undefined },
+          { text: t("walkKeyShared"), colour: null, width: 2.4, dash: "1 6" },
         ].map((k) => (
           <span key={k.text} className="inline-flex items-center gap-1">
             <svg width="24" height="8" aria-hidden="true">
-              <line x1="2" y1="4" x2="22" y2="4" className={k.stroke} strokeWidth={k.width} strokeLinecap="round" strokeDasharray={k.dash} />
+              <line x1="2" y1="4" x2="22" y2="4" className={k.colour ? undefined : "stroke-muted-foreground"} style={k.colour ? { stroke: k.colour } : undefined} strokeWidth={k.width} strokeLinecap="round" strokeDasharray={k.dash} />
             </svg>
             {k.text}
           </span>
         ))}
       </div>
+    </>
+  );
+
+  return (
+    <div ref={setOuter}>
+      <div className="mb-3 flex flex-wrap items-center gap-3">
+        {trail.length > 0 && (
+          <Button size="sm" variant="secondary" tip={trail[trail.length - 1].name} onClick={back}>
+            {t("walkBack", { name: trail[trail.length - 1].name })}
+          </Button>
+        )}
+        <h1 className="text-2xl font-bold">{nameOf(centre)}</h1>
+        <span className="text-sm text-muted-foreground">
+          {centre.kind === "tag" ? t("webNotes", { n: centre.count }) : formatDateShort(centre.at, lang)}
+        </span>
+        {centre.kind === "note" && (
+          <NoteLink note={centre.note} className="ml-auto text-sm font-medium hover:underline">
+            {t("walkOpen")}
+          </NoteLink>
+        )}
+        {centre.kind === "tag" && centre.meaning && <p className="w-full text-sm text-muted-foreground">{centre.meaning}</p>}
+        {centre.kind === "note" && summaryOf(centre) && <p className="w-full text-sm text-muted-foreground">{summaryOf(centre)}</p>}
+      </div>
+
+      {beside ? (
+        <div style={{ display: "grid", gridTemplateColumns: `minmax(0, 1fr) ${SIDE_W}px`, gap: 16, alignItems: "start" }}>
+          <div style={{ minWidth: 0 }}>{picture}</div>
+          <WalkList rows={rows} height={height} lit={lit?.nodes ?? null} centre={walk.centre} onPoint={point} onLeave={() => aim(null, LET_GO_MS)} onGo={go} t={t} lang={lang} />
+        </div>
+      ) : (
+        <div>
+          <div className="mb-2 flex gap-2">
+            <Button size="sm" variant={page === 0 ? "primary" : "secondary"} tip={t("tipWalkPicture")} aria-pressed={page === 0} onClick={() => showPage(0)}>
+              {t("walkPicture")}
+            </Button>
+            <Button size="sm" variant={page === 1 ? "primary" : "secondary"} tip={t("tipWalkList")} aria-pressed={page === 1} onClick={() => showPage(1)}>
+              {t("walkList")}
+            </Button>
+          </div>
+          <div
+            ref={pager}
+            onScroll={(ev) => setPage(Math.round(ev.currentTarget.scrollLeft / Math.max(1, ev.currentTarget.clientWidth)))}
+            style={{ display: "flex", overflowX: "auto", scrollSnapType: "x mandatory", scrollbarWidth: "none", overscrollBehaviorX: "contain" }}
+          >
+            <div style={{ flex: "0 0 100%", minWidth: 0, scrollSnapAlign: "start" }}>{picture}</div>
+            <div style={{ flex: "0 0 100%", minWidth: 0, scrollSnapAlign: "start" }}>
+              <WalkList rows={rows} height={height} lit={lit?.nodes ?? null} centre={walk.centre} onPoint={point} onLeave={() => aim(null, LET_GO_MS)} onGo={(n) => { showPage(0); go(n); }} t={t} lang={lang} />
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * The walk as a list, nearest first, in the picture's colours. A row lights its
+ * bubble and, pressed, walks there. A node that touches several nearer ones
+ * is opened under one and shown again, shut, under the others; the "+n" says so.
+ */
+function WalkList({ rows, height, lit, centre, onPoint, onLeave, onGo, t, lang }: { rows: Row[]; height: number; lit: Set<string> | null; centre: string; onPoint: (id: string) => void; onLeave: () => void; onGo: (n: WalkNode) => void; t: T; lang: Lang }) {
+  return (
+    <div className="overflow-y-auto rounded-2xl border border-border bg-card" style={{ maxHeight: height }} onPointerLeave={onLeave}>
+      {rows.map((r, i) => {
+        const n = r.node;
+        const tag = n.kind === "tag";
+        const on = !!lit && lit.has(n.id);
+        const colour = levelColour(r.level);
+        return (
+          <div
+            key={`${n.id}:${i}`}
+            role="button"
+            tabIndex={0}
+            data-tip={r.again ? t("walkAgain") : t("tipWalkRow")}
+            aria-label={nameOf(n)}
+            className={on ? "bg-muted" : "hover:bg-muted"}
+            style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", padding: "7px 10px", marginLeft: 6 + r.depth * 14, borderLeft: `${LEVEL_WIDTH[r.level]}px solid ${colour}`, opacity: r.again ? 0.6 : 1 }}
+            onPointerEnter={(ev) => ev.pointerType !== "touch" && onPoint(n.id)}
+            onFocus={() => onPoint(n.id)}
+            onClick={() => n.id !== centre && onGo(n)}
+            onKeyDown={(ev) => ev.key === "Enter" && n.id !== centre && onGo(n)}
+          >
+            <span aria-hidden style={{ flex: "none", width: 10, height: 10, borderRadius: "50%", boxSizing: "border-box", border: `2px solid ${colour}`, background: tag ? "transparent" : colour }} />
+            <span className="truncate text-sm" style={{ flex: 1, minWidth: 0, fontWeight: n.id === centre || tag ? 600 : 400 }}>
+              {nameOf(n)}
+            </span>
+            {r.alsoUnder.length > 0 && (
+              <span className="text-xs text-muted-foreground" style={{ flex: "none" }} data-tip={t("walkAlsoTip", { names: r.alsoUnder.map((u) => u.name).join(", ") })}>
+                {t("walkAlso", { n: r.alsoUnder.length })}
+              </span>
+            )}
+            <span className="text-xs text-muted-foreground" style={{ flex: "none" }}>
+              {tag ? t("webNotes", { n: n.count }) : formatDateShort(n.at, lang)}
+            </span>
+          </div>
+        );
+      })}
     </div>
   );
 }
