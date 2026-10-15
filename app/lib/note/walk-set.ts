@@ -54,7 +54,8 @@ export function mergeWalks(walks: Walk[], max = PICTURE_NOTES_MAX): Picture {
   for (const w of walks) for (const e of w.edges) if (ids.has(e.a) && ids.has(e.b)) edges.set(e.id, e);
 
   const shares = new Map<string, Share>();
-  for (const w of walks) for (const n of w.nodes) if (n.kind === "note") shares.set(n.id, (reach.get(n.id)?.length ?? 0) >= 2 ? "shared" : "only");
+  // Notes and tags alike; an anchor is a centre, marked neither.
+  for (const w of walks) for (const n of w.nodes) if (!anchors.includes(n.id)) shares.set(n.id, (reach.get(n.id)?.length ?? 0) >= 2 ? "shared" : "only");
 
   return { walk: { centre: anchors[0], nodes: kept, edges: [...edges.values()] }, anchors, walks, reach, shares };
 }
