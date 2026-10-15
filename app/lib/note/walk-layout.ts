@@ -11,6 +11,8 @@ import type { Walk, WalkNode } from "@/lib/note/walk";
 
 const MARGIN = 56;
 const STEP = 74;
+/** How much room a band for the notes shared by neighbouring anchors has beside an anchor's own band. */
+const COMMON_WEIGHT = 1.6;
 /** Narrower than this, time runs down the screen instead of across it. */
 export const WIDE = 640;
 
@@ -129,17 +131,21 @@ export function layoutWalk(walk: Walk, width: number, height: number, anchoring?
   const at = new Map<string, P>();
   const kids = new Map<string, number>();
 
-  // Several anchors: each sits in its own row across the time axis; a node held by two or more stays
-  // between those anchors, a node held by one stays on that anchor's outer side, away from the others.
-  const rowOf = new Map<string, number>();
+  // Several anchors: the picture is cut across the time axis into bands, in the order of the set: each
+  // anchor's own band (its centre and the notes only it reaches), and between neighbours a band for what
+  // they share. A note held by several sits in the band between the first and last of its anchors; the
+  // centres lie outside those bands, and a note one anchor reaches stays in that anchor's band.
+  type Zone = { lo: number; hi: number; row: number };
+  const zones = new Map<string, Zone>();
   const bounds = new Map<string, [number, number]>();
-  const OUT = STEP * 0.5;
-  if (multi) anchoring!.ids.forEach((id, k) => rowOf.set(id, vLow + ((vHigh - vLow) * (k + 1)) / (anchoring!.ids.length + 1)));
-  const outward = (id: string): number => {
-    const mine = rowOf.get(id)!;
-    const others = [...rowOf].filter(([o]) => o !== id).map(([, r]) => r);
-    return Math.sign(mine - others.reduce((s, r) => s + r, 0) / others.length);
-  };
+  if (multi) {
+    const n = anchoring!.ids.length;
+    const unit = (vHigh - vLow) / (n + (n - 1) * COMMON_WEIGHT);
+    anchoring!.ids.forEach((id, k) => {
+      const lo = vLow + unit * k * (1 + COMMON_WEIGHT);
+      zones.set(id, { lo, hi: lo + unit, row: lo + unit / 2 });
+    });
+  }
 
   // Outward from the centre: a node starts a step to one side of the one it came from.
   for (const n of [...walk.nodes].sort((a, b) => a.ring - b.ring || a.id.localeCompare(b.id))) {
@@ -147,22 +153,24 @@ export function layoutWalk(walk: Walk, width: number, height: number, anchoring?
     const u = place(Number.isFinite(ms) ? ms : (from ?? 0));
     let v = V / 2;
     if (multi) {
-      const row = rowOf.get(n.id);
-      const held = (anchoring!.reach.get(n.id) ?? []).filter((a) => rowOf.has(a));
-      if (row !== undefined) {
-        v = row;
-        bounds.set(n.id, [row, row]);
+      const own = zones.get(n.id);
+      const held = (anchoring!.reach.get(n.id) ?? []).filter((a) => zones.has(a));
+      if (own) {
+        v = own.row;
+        bounds.set(n.id, [own.row, own.row]);
       } else if (held.length >= 2) {
-        const rows = held.map((a) => rowOf.get(a)!);
-        v = rows.reduce((s, r) => s + r, 0) / rows.length + (hash(n.id) - 0.5) * 24;
-        bounds.set(n.id, [Math.min(...rows), Math.max(...rows)]);
+        const order = held.map((a) => anchoring!.ids.indexOf(a)).sort((x, y) => x - y);
+        const lo = zones.get(anchoring!.ids[order[0]])!.hi;
+        const hi = zones.get(anchoring!.ids[order[order.length - 1]])!.lo;
+        v = (lo + hi) / 2 + (hash(n.id) - 0.5) * (hi - lo) * 0.8;
+        bounds.set(n.id, [lo + 3, hi - 3]);
       } else if (held.length === 1) {
-        const home = rowOf.get(held[0])!;
+        const z = zones.get(held[0])!;
         const k = kids.get(held[0]) ?? 0;
         kids.set(held[0], k + 1);
-        const dir = outward(held[0]) || (k % 2 === 0 ? 1 : -1);
-        v = home + dir * (STEP * (0.55 + 0.45 * n.ring) + hash(n.id) * 18);
-        bounds.set(n.id, dir > 0 ? [home + OUT, vHigh] : [vLow, home - OUT]);
+        const room = (z.hi - z.lo) / 2 - 6;
+        v = z.row + (k % 2 === 0 ? 1 : -1) * Math.min(room, STEP * (0.35 + 0.25 * n.ring)) * (0.5 + hash(n.id) * 0.5);
+        bounds.set(n.id, [z.lo + 3, z.hi - 3]);
       }
     } else if (n.from) {
       const parent = at.get(n.from)!;

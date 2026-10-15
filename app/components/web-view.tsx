@@ -214,7 +214,6 @@ function WalkPanel({ anchorKey, struck: struckTags }: { anchorKey: string; struc
   const height = width >= 640 ? Math.max(420, Math.min(720, Math.round(width * 0.52))) : Math.max(480, Math.min(780, Math.round(width * 1.4)));
 
   // Whether there is room for the list beside the picture, measured before the first paint.
-  const listCount = Math.max(1, pic?.walks.length ?? 1);
   const [outer, setOuter] = useState<HTMLDivElement | null>(null);
   const [room, setRoom] = useState(0);
   useLayoutEffect(() => {
@@ -225,7 +224,7 @@ function WalkPanel({ anchorKey, struck: struckTags }: { anchorKey: string; struc
     ro.observe(outer);
     return () => ro.disconnect();
   }, [outer]);
-  const beside = room >= SIDE_MIN + (listCount - 1) * (SIDE_W + 16);
+  const beside = room >= SIDE_MIN;
   // Narrow: the picture and the list are two pages side by side, swiped between.
   const pager = useRef<HTMLDivElement | null>(null);
   const [page, setPage] = useState(0);
@@ -584,11 +583,14 @@ function WalkPanel({ anchorKey, struck: struckTags }: { anchorKey: string; struc
       </div>
 
       {beside ? (
-        <div style={{ display: "grid", gridTemplateColumns: `minmax(0, 1fr) repeat(${lists.length}, ${SIDE_W}px)`, gap: 16, alignItems: "start" }}>
+        <div style={{ display: "grid", gridTemplateColumns: `minmax(0, 1fr) ${SIDE_W}px`, gap: 16, alignItems: "start" }}>
           <div style={{ minWidth: 0 }}>{picture}</div>
-          {lists.map((l) => (
-            <ListColumn key={l.walk.centre} list={l} onGo={go} {...column} />
-          ))}
+          {/* The lists one above the other, sharing the picture's height, so the picture keeps the width. */}
+          <div style={{ display: "flex", flexDirection: "column", gap: 12, minWidth: 0 }}>
+            {lists.map((l) => (
+              <ListColumn key={l.walk.centre} list={l} onGo={go} {...column} height={Math.max(120, Math.floor((height - (lists.length - 1) * 12 - (multi ? lists.length * 26 : 0)) / lists.length))} />
+            ))}
+          </div>
         </div>
       ) : (
         <div>
