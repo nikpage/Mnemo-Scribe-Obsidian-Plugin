@@ -84,7 +84,8 @@ export type Anchoring = { ids: string[]; reach: Map<string, string[]> };
 
 export function layoutWalk(walk: Walk, width: number, height: number, anchoring?: Anchoring): Layout {
   const multi = !!anchoring && anchoring.ids.length > 1;
-  const along: "x" | "y" = width >= WIDE ? "x" : "y";
+  // Several anchors are always bands one above the other (the first anchor on top), so time runs across at any width.
+  const along: "x" | "y" = width >= WIDE || multi ? "x" : "y";
   // u runs along time, v across it.
   const U = along === "x" ? width : height;
   const V = along === "x" ? height : width;
