@@ -1,0 +1,55 @@
+// [Librarian]
+import type { useLang } from "@/hooks/use-lang";
+import { formatDateShort } from "@/lib/format";
+import type { WalkNode } from "@/lib/note/walk";
+import { LEVEL_WIDTH, type Row, levelColour, nameOf } from "@/lib/note/walk-levels";
+
+type T = ReturnType<typeof useLang>["t"];
+type Lang = ReturnType<typeof useLang>["lang"];
+
+/**
+ * The walk as a list, nearest first, in the picture's colours. A row lights its
+ * bubble and, pressed, walks there. A node that touches several nearer ones
+ * is opened under one and shown again, shut, under the others; the "+n" says so.
+ * A row carries no tip (`tips-check.mjs`): the box under the picture already says
+ * what the lit thing is and why, and a tip here covered the picture.
+ */
+export function WalkList({ rows, height, lit, centre, onPoint, onLeave, onGo, t, lang }: { rows: Row[]; height: number; lit: Set<string> | null; centre: string; onPoint: (id: string) => void; onLeave: () => void; onGo: (n: WalkNode) => void; t: T; lang: Lang }) {
+  return (
+    <div className="overflow-y-auto rounded-2xl border border-border bg-card" style={{ maxHeight: height }} onPointerLeave={onLeave}>
+      {rows.map((r, i) => {
+        const n = r.node;
+        const tag = n.kind === "tag";
+        const on = !!lit && lit.has(n.id);
+        const colour = levelColour(r.level);
+        return (
+          <div
+            key={`${n.id}:${i}`}
+            role="button"
+            tabIndex={0}
+            aria-label={nameOf(n)}
+            className={on ? "bg-muted" : "hover:bg-muted"}
+            style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", padding: "7px 10px", marginLeft: 6 + r.depth * 14, borderLeft: `${LEVEL_WIDTH[r.level]}px solid ${colour}`, opacity: r.again ? 0.6 : 1 }}
+            onPointerEnter={(ev) => ev.pointerType !== "touch" && onPoint(n.id)}
+            onFocus={() => onPoint(n.id)}
+            onClick={() => n.id !== centre && onGo(n)}
+            onKeyDown={(ev) => ev.key === "Enter" && n.id !== centre && onGo(n)}
+          >
+            <span aria-hidden style={{ flex: "none", width: 10, height: 10, borderRadius: "50%", boxSizing: "border-box", border: `2px solid ${colour}`, background: tag ? "transparent" : colour }} />
+            <span className="truncate text-sm" style={{ flex: 1, minWidth: 0, fontWeight: n.id === centre || tag ? 600 : 400 }}>
+              {nameOf(n)}
+            </span>
+            {r.alsoUnder.length > 0 && (
+              <span className="text-xs text-muted-foreground" style={{ flex: "none" }}>
+                {t("walkAlso", { n: r.alsoUnder.length })}
+              </span>
+            )}
+            <span className="text-xs text-muted-foreground" style={{ flex: "none" }}>
+              {tag ? t("webNotes", { n: n.count }) : formatDateShort(n.at, lang)}
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}

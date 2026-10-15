@@ -30,7 +30,7 @@ const CSS = `
   --s-on-accent: var(--text-on-accent, #ffffff);
   --s-danger: var(--text-error, #c53030);
   --s-card: 10px;
-  --walk-1: #e8710a; --walk-2: #3a7bd5; --walk-3: #c2408e;
+  --walk-1: #e8710a; --walk-2: #3a7bd5; --walk-3: #1b8a4b;
   color: var(--s-text); font-size: 13px; line-height: 1.45; padding: 10px 12px 24px;
   font-family: var(--joplin-font-family, var(--font-interface, system-ui, sans-serif));
   container-type: inline-size; overflow-wrap: anywhere;

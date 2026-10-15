@@ -8,7 +8,8 @@ import { useLang } from "@/hooks/use-lang";
 import { formatDateShort, formatFactDate } from "@/lib/format";
 import { type Walk, type WalkEdge, type WalkNode, type WalkStore, WALK_STORE_URL, buildWalk, defaultCentre, inputOf } from "@/lib/note/walk";
 import { type Layout, type Side, layoutWalk } from "@/lib/note/walk-layout";
-import { LEVEL_WIDTH, type Row, edgeLevel, levelColour, levelOfRing, listOf } from "@/lib/note/walk-levels";
+import { LEVEL_WIDTH, connectionsOf, drawOrder, levelColour, levelOfRing, listOf, nameOf } from "@/lib/note/walk-levels";
+import { WalkList } from "@/components/walk-list";
 import { NoteLink } from "@/components/note-link";
 import { PHRASE } from "@/components/note-links";
 import { Button, Notice } from "@/components/ui";
@@ -30,7 +31,6 @@ type Lang = ReturnType<typeof useLang>["lang"];
 
 const url = (at: Where | null) => (!at ? "/api/notes/walk" : "tag" in at ? `/api/notes/walk?tag=${encodeURIComponent(at.tag)}` : `/api/notes/walk?note=${encodeURIComponent(at.note)}`);
 const whereOf = (n: WalkNode): Where => (n.kind === "tag" ? { tag: n.name } : { note: n.note.id });
-const nameOf = (n: WalkNode) => (n.kind === "tag" ? `#${n.name}` : n.note.title);
 /** Slow in, quick through the middle, slow out: no jolt at the start, no long tail at the end. */
 const ease = (x: number) => (x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2);
 const GLIDE_MS = 520;
@@ -38,6 +38,8 @@ const DIM = 0.07;
 /** How long a pointer must rest on a bubble before it lights, and how long after leaving the picture before it lets go. */
 const REST_MS = 90;
 const LET_GO_MS = 400;
+/** The box under the picture holds one fixed height, so what it says never moves the legend; long lists scroll inside it. */
+const STRIP_H = 176;
 /** Room for the list beside the picture. */
 const SIDE_MIN = 980;
 const SIDE_W = 340;
@@ -184,8 +186,6 @@ export function WebView() {
 
   const [hover, setHover] = useState<string | null>(null);
   const [picked, setPicked] = useState<string | null>(null);
-  // A line of the lit bubble, pointed at to read why it is there.
-  const [line, setLine] = useState<string | null>(null);
   // The bubble just chosen, marked at once while its walk is on the way.
   const [chosen, setChosen] = useState<string | null>(null);
   const touch = useRef(false);
@@ -205,23 +205,16 @@ export function WebView() {
   };
   useEffect(() => cancelAim, []);
 
-  // What is lit: the thing pointed at and what touches it. Something that is not in this picture lights nothing.
+  // What is lit: the bubble pointed at and what touches it. Something that is not in this picture lights nothing.
   const lit = useMemo(() => {
     const id = hover ?? picked;
-    if (!id || !walk || !(walk.nodes.some((n) => n.id === id) || walk.edges.some((x) => x.id === id))) return null;
-    const nodes = new Set<string>();
+    if (!id || !walk || !walk.nodes.some((n) => n.id === id)) return null;
+    const nodes = new Set<string>([id]);
     const edges = new Set<string>();
-    const edge = walk.edges.find((x) => x.id === id);
-    if (edge) {
-      edges.add(edge.id);
-      nodes.add(edge.a).add(edge.b);
-    } else {
-      nodes.add(id);
-      for (const x of walk.edges) {
-        if (x.a !== id && x.b !== id) continue;
-        edges.add(x.id);
-        nodes.add(x.a).add(x.b);
-      }
+    for (const x of walk.edges) {
+      if (x.a !== id && x.b !== id) continue;
+      edges.add(x.id);
+      nodes.add(x.a).add(x.b);
     }
     return { id, nodes, edges };
   }, [hover, picked, walk]);
@@ -252,7 +245,6 @@ export function WebView() {
     cancelAim();
     setHover(null);
     setPicked(null);
-    setLine(null);
     setKept(null);
     setChosen(node.id);
   };
@@ -264,7 +256,6 @@ export function WebView() {
     cancelAim();
     setHover(null);
     setPicked(null);
-    setLine(null);
     setKept(null);
     setChosen(null);
   };
@@ -280,9 +271,7 @@ export function WebView() {
   // The bubble chosen, until the walk it asked for has arrived or failed.
   const pending = chosen && walk.centre !== chosen && !res.error ? chosen : null;
 
-  const stripId = line ?? kept;
-  const stripNode = stripId ? (walk.nodes.find((n) => n.id === stripId) ?? null) : null;
-  const stripEdge = stripId && !stripNode ? (walk.edges.find((x) => x.id === stripId) ?? null) : null;
+  const stripNode = kept ? (walk.nodes.find((n) => n.id === kept) ?? null) : null;
   const ringOf = new Map(walk.nodes.map((n) => [n.id, n.ring]));
 
   const rows = listOf(walk);
@@ -315,7 +304,6 @@ export function WebView() {
               fill="transparent"
               onClick={() => {
                 setPicked(null);
-                setLine(null);
                 setKept(null);
               }}
             />
@@ -364,45 +352,29 @@ export function WebView() {
               </g>
             ))}
 
-            {[...scene.edges.values()].map(({ edge, mode }) => {
-              const a = where.get(edge.a);
-              const b = where.get(edge.b);
-              if (!a || !b) return null;
-              const alpha = (mode === "leave" ? 1 - e : mode === "enter" ? e : 1) * dimOf(edge.id, "edge");
-              const d = curve(a.x, a.y, b.x, b.y, edge.kind === "under" ? 0.08 : 0.14);
-              // A line takes the level of its nearer end; what is lit is heavier, never another colour.
-              const level = edgeLevel(edge, ringOf);
-              const dotted = edge.kind === "subject" || edge.kind === "theme";
-              const heavy = lit?.edges.has(edge.id) ? 1.4 : 1;
-              return (
-                <g
-                  key={edge.id}
-                  opacity={alpha}
-                  style={{ transition: e >= 1 ? "opacity 260ms ease" : "none" }}
-                  onPointerEnter={() => {
-                    const now = hover ?? picked;
-                    const onNode = !!now && (now.startsWith("t:") || now.startsWith("n:"));
-                    // While a bubble is lit, only its own lines answer: the rest must not steal the pointer.
-                    if (!onNode) aim(edge.id, REST_MS);
-                    else if (edge.a === now || edge.b === now) setLine(edge.id);
-                  }}
-                  onPointerLeave={() => {
-                    cancelAim();
-                    setLine(null);
-                  }}
-                  onPointerDown={(ev) => {
-                    touch.current = ev.pointerType === "touch";
-                  }}
-                  onClick={(ev) => {
-                    ev.stopPropagation();
-                    setPicked((p) => (p === edge.id ? null : edge.id));
-                  }}
-                >
-                  <path d={d} fill="none" stroke="transparent" strokeWidth={16} />
-                  <path d={d} fill="none" style={{ stroke: levelColour(level) }} strokeWidth={LEVEL_WIDTH[level] * heavy} strokeLinecap="round" strokeDasharray={dotted ? "1 7" : undefined} />
-                </g>
-              );
-            })}
+            {/* Lines answer nothing: only bubbles and list rows do, so the pointer never loses what it holds on the way. */}
+            {drawOrder([...scene.edges.values()], ringOf).map(({ edge, mode, level }) => {
+                const a = where.get(edge.a);
+                const b = where.get(edge.b);
+                if (!a || !b) return null;
+                const alpha = (mode === "leave" ? 1 - e : mode === "enter" ? e : 1) * dimOf(edge.id, "edge");
+                const d = curve(a.x, a.y, b.x, b.y, edge.kind === "under" ? 0.08 : 0.14);
+                const dotted = edge.kind === "subject" || edge.kind === "theme";
+                const heavy = lit?.edges.has(edge.id) ? 1.4 : 1;
+                return (
+                  <path
+                    key={edge.id}
+                    d={d}
+                    fill="none"
+                    opacity={alpha}
+                    pointerEvents="none"
+                    style={{ stroke: levelColour(level), transition: e >= 1 ? "opacity 260ms ease" : "none" }}
+                    strokeWidth={LEVEL_WIDTH[level] * heavy}
+                    strokeLinecap="round"
+                    strokeDasharray={dotted ? "1 7" : undefined}
+                  />
+                );
+              })}
 
             {drawn
               .sort((x, y) => (x.node.id === walk.centre ? 1 : 0) - (y.node.id === walk.centre ? 1 : 0))
@@ -480,18 +452,11 @@ export function WebView() {
         {alone && <p className="text-center text-sm text-muted-foreground" style={{ position: "absolute", bottom: 40, left: 16, right: 16 }}>{t("walkAlone")}</p>}
       </div>
 
-      <div style={{ minHeight: 104 }} className="mt-2" aria-live="polite">
-        {(stripNode || stripEdge) && (
-          <div className="rounded-2xl border border-border bg-card p-3 text-sm">
-            {stripNode ? (
-              stripNode.kind === "note" ? (
-                <NoteCard node={stripNode} summary={summaryOf(stripNode)} lang={lang} t={t} />
-              ) : (
-                <TagCard node={stripNode} t={t} />
-              )
-            ) : (
-              stripEdge && <EdgeCard edge={stripEdge} walk={walk} t={t} />
-            )}
+      <div style={{ height: STRIP_H }} className="mt-2" aria-live="polite">
+        {stripNode && (
+          <div className="overflow-y-auto rounded-2xl border border-border bg-card p-3 text-sm" style={{ maxHeight: STRIP_H }}>
+            {stripNode.kind === "note" ? <NoteCard node={stripNode} summary={summaryOf(stripNode)} lang={lang} t={t} /> : <TagCard node={stripNode} t={t} />}
+            <Connections node={stripNode} walk={walk} t={t} />
           </div>
         )}
       </div>
@@ -566,52 +531,6 @@ export function WebView() {
   );
 }
 
-/**
- * The walk as a list, nearest first, in the picture's colours. A row lights its
- * bubble and, pressed, walks there. A node that touches several nearer ones
- * is opened under one and shown again, shut, under the others; the "+n" says so.
- */
-function WalkList({ rows, height, lit, centre, onPoint, onLeave, onGo, t, lang }: { rows: Row[]; height: number; lit: Set<string> | null; centre: string; onPoint: (id: string) => void; onLeave: () => void; onGo: (n: WalkNode) => void; t: T; lang: Lang }) {
-  return (
-    <div className="overflow-y-auto rounded-2xl border border-border bg-card" style={{ maxHeight: height }} onPointerLeave={onLeave}>
-      {rows.map((r, i) => {
-        const n = r.node;
-        const tag = n.kind === "tag";
-        const on = !!lit && lit.has(n.id);
-        const colour = levelColour(r.level);
-        return (
-          <div
-            key={`${n.id}:${i}`}
-            role="button"
-            tabIndex={0}
-            data-tip={r.again ? t("walkAgain") : t("tipWalkRow")}
-            aria-label={nameOf(n)}
-            className={on ? "bg-muted" : "hover:bg-muted"}
-            style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", padding: "7px 10px", marginLeft: 6 + r.depth * 14, borderLeft: `${LEVEL_WIDTH[r.level]}px solid ${colour}`, opacity: r.again ? 0.6 : 1 }}
-            onPointerEnter={(ev) => ev.pointerType !== "touch" && onPoint(n.id)}
-            onFocus={() => onPoint(n.id)}
-            onClick={() => n.id !== centre && onGo(n)}
-            onKeyDown={(ev) => ev.key === "Enter" && n.id !== centre && onGo(n)}
-          >
-            <span aria-hidden style={{ flex: "none", width: 10, height: 10, borderRadius: "50%", boxSizing: "border-box", border: `2px solid ${colour}`, background: tag ? "transparent" : colour }} />
-            <span className="truncate text-sm" style={{ flex: 1, minWidth: 0, fontWeight: n.id === centre || tag ? 600 : 400 }}>
-              {nameOf(n)}
-            </span>
-            {r.alsoUnder.length > 0 && (
-              <span className="text-xs text-muted-foreground" style={{ flex: "none" }} data-tip={t("walkAlsoTip", { names: r.alsoUnder.map((u) => u.name).join(", ") })}>
-                {t("walkAlso", { n: r.alsoUnder.length })}
-              </span>
-            )}
-            <span className="text-xs text-muted-foreground" style={{ flex: "none" }}>
-              {tag ? t("webNotes", { n: n.count }) : formatDateShort(n.at, lang)}
-            </span>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
 function NoteCard({ node, summary, lang, t }: { node: Extract<WalkNode, { kind: "note" }>; summary: string | null; lang: Lang; t: T }) {
   return (
     <div>
@@ -635,6 +554,22 @@ function TagCard({ node, t }: { node: Extract<WalkNode, { kind: "tag" }>; t: T }
         #{node.name} <span className="text-muted-foreground" style={{ fontWeight: 400 }}>· {t("webNotes", { n: node.count })}</span>
       </p>
       {node.meaning && <p className="text-muted-foreground">{node.meaning}</p>}
+    </div>
+  );
+}
+
+/** Everything the lit bubble touches in this picture, and why, one line each. */
+function Connections({ node, walk, t }: { node: WalkNode; walk: Walk; t: T }) {
+  const own = connectionsOf(walk, node.id);
+  if (!own.length) return null;
+  return (
+    <div className="mt-2 border-border" style={{ borderTop: "1px solid", paddingTop: 8 }}>
+      <p className="mb-1 text-xs font-medium text-muted-foreground">{t("walkConnected")}</p>
+      {own.map((edge) => (
+        <div key={edge.id} className="mb-1">
+          <EdgeCard edge={edge} walk={walk} t={t} />
+        </div>
+      ))}
     </div>
   );
 }

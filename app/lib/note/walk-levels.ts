@@ -11,12 +11,25 @@ import type { Walk, WalkEdge, WalkNode } from "@/lib/note/walk";
 export type Level = 1 | 2 | 3;
 
 export const levelOfRing = (ring: number): Level => (ring <= 0 ? 1 : ring === 1 ? 2 : 3);
-export const LEVEL_WIDTH: Record<Level, number> = { 1: 3.6, 2: 2.4, 3: 1.5 };
+export const LEVEL_WIDTH: Record<Level, number> = { 1: 4.4, 2: 2.4, 3: 1.5 };
 /** The colour of a level: CSS variables, drawn in the app (`globals.css`) and in the panel (`panel/style.ts`). */
 export const levelColour = (level: Level) => `var(--walk-${level})`;
 
 export function edgeLevel(edge: WalkEdge, ringOf: Map<string, number>): Level {
   return levelOfRing(Math.min(ringOf.get(edge.a) ?? 3, ringOf.get(edge.b) ?? 3));
+}
+
+/** Lines furthest first, so what leaves the centre is drawn last, on top of everything. */
+export function drawOrder<T extends { edge: WalkEdge }>(held: T[], ringOf: Map<string, number>): (T & { level: Level })[] {
+  return held.map((h) => ({ ...h, level: edgeLevel(h.edge, ringOf) })).sort((x, y) => y.level - x.level);
+}
+
+/** The strongest reasons first: a note link, a shared subject or thread, a tag's parent, a note's tag. */
+const REASON_ORDER: Record<WalkEdge["kind"], number> = { link: 0, subject: 1, theme: 1, under: 2, carries: 3 };
+
+/** Every line of the picture that touches one node, the strongest reason first. */
+export function connectionsOf(walk: Walk, id: string): WalkEdge[] {
+  return walk.edges.filter((x) => x.a === id || x.b === id).sort((x, y) => REASON_ORDER[x.kind] - REASON_ORDER[y.kind] || x.id.localeCompare(y.id));
 }
 
 /** One line of the list beside the picture. */
@@ -31,7 +44,7 @@ export type Row = {
   alsoUnder: { id: string; name: string }[];
 };
 
-const nameOf = (n: WalkNode) => (n.kind === "tag" ? `#${n.name}` : n.note.title);
+export const nameOf = (n: WalkNode) => (n.kind === "tag" ? `#${n.name}` : n.note.title);
 
 /**
  * The walk as a tree from the centre, in the order a person reads it: tags
