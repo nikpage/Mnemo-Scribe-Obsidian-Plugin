@@ -8,7 +8,7 @@ import { useLang } from "@/hooks/use-lang";
 import { formatDateShort, formatFactDate } from "@/lib/format";
 import { type Walk, type WalkEdge, type WalkNode, type WalkStore, WALK_STORE_URL, buildWalk, defaultCentre, inputOf } from "@/lib/note/walk";
 import { type Layout, type Side, layoutWalk } from "@/lib/note/walk-layout";
-import { LEVEL_WIDTH, connectionsOf, drawOrder, levelColour, levelOfRing, listOf, nameOf } from "@/lib/note/walk-levels";
+import { LEVEL_WIDTH, connectionsOf, drawOrder, levelColour, levelOfRing, listOf, nameOf, shownOf } from "@/lib/note/walk-levels";
 import { WalkList } from "@/components/walk-list";
 import { NoteLink } from "@/components/note-link";
 import { PHRASE } from "@/components/note-links";
@@ -188,6 +188,9 @@ export function WebView() {
   const [picked, setPicked] = useState<string | null>(null);
   // The bubble just chosen, marked at once while its walk is on the way.
   const [chosen, setChosen] = useState<string | null>(null);
+  // What the box under the picture describes: the last thing pointed at, held while the pointer travels to
+  // the box, and let go (back to the centre) once the pointer has left the picture, the list and the box.
+  const [kept, setKept] = useState<string | null>(null);
   const touch = useRef(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const cancelAim = () => {
@@ -199,6 +202,7 @@ export function WebView() {
     cancelAim();
     timer.current = setTimeout(() => {
       setHover(id);
+      if (id === null) setKept(null);
       // What a click here would show is asked for now, so the click has nothing to wait on.
       if (ahead) void preload(url(ahead), (key: string) => api<Walk>(key));
     }, wait);
@@ -219,9 +223,6 @@ export function WebView() {
     return { id, nodes, edges };
   }, [hover, picked, walk]);
 
-  // The last thing pointed at stays in the reading strip below the picture until another is,
-  // so the pointer can travel to it without it changing on the way.
-  const [kept, setKept] = useState<string | null>(null);
   if (lit && lit.id !== kept) setKept(lit.id);
 
   if (!allAnswered(res)) return null;
@@ -271,7 +272,7 @@ export function WebView() {
   // The bubble chosen, until the walk it asked for has arrived or failed.
   const pending = chosen && walk.centre !== chosen && !res.error ? chosen : null;
 
-  const stripNode = kept ? (walk.nodes.find((n) => n.id === kept) ?? null) : null;
+  const stripNode = shownOf(walk, kept);
   const ringOf = new Map(walk.nodes.map((n) => [n.id, n.ring]));
 
   const rows = listOf(walk);
@@ -452,7 +453,7 @@ export function WebView() {
         {alone && <p className="text-center text-sm text-muted-foreground" style={{ position: "absolute", bottom: 40, left: 16, right: 16 }}>{t("walkAlone")}</p>}
       </div>
 
-      <div style={{ height: STRIP_H }} className="mt-2" aria-live="polite">
+      <div style={{ height: STRIP_H }} className="mt-2" aria-live="polite" onPointerEnter={cancelAim} onPointerLeave={() => aim(null, LET_GO_MS)}>
         {stripNode && (
           <div className="overflow-y-auto rounded-2xl border border-border bg-card p-3 text-sm" style={{ maxHeight: STRIP_H }}>
             {stripNode.kind === "note" ? <NoteCard node={stripNode} summary={summaryOf(stripNode)} lang={lang} t={t} /> : <TagCard node={stripNode} t={t} />}
