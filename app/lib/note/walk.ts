@@ -3,8 +3,8 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { noteName } from "@/lib/note/filing";
 import type { LinkType } from "@/lib/note/links";
-import { type Parents, parentsOf, under } from "@/lib/note/tag-tree";
-import { SUBJECT_MAX_NOTES, type NoteRef, type WebInput, type WebNote } from "@/lib/note/web";
+import { type Parents, type TagRow, parentsOf, under } from "@/lib/note/tag-tree";
+import { SUBJECT_MAX_NOTES, type NoteRef, type WebInput, type WebLink, type WebNote } from "@/lib/note/web";
 
 /**
  * The walk: a few steps out from one tag or note, never the whole store.
@@ -196,13 +196,57 @@ export function firstSentence(text: string, max = 200): string {
   return one.length > max ? `${one.slice(0, max - 1).trimEnd()}…` : one;
 }
 
+/** As many summaries as one request may ask for: a walk shows at most this many notes. */
+export const SUMMARIES_MAX = 60;
+
+/** The first sentence of each named note's summary, for this account's notes only. */
+export async function summariesOf(admin: Db, userId: string, ids: string[]): Promise<Record<string, string>> {
+  const asked = [...new Set(ids)].slice(0, SUMMARIES_MAX);
+  if (!asked.length) return {};
+  const { data, error } = await admin.from("recordings").select("id, analysis").eq("user_id", userId).in("id", asked);
+  if (error) throw new Error(error.message);
+  const out: Record<string, string> = {};
+  for (const row of (data || []) as { id: string; analysis: { summary?: string } | null }[]) if (row.analysis?.summary) out[row.id] = firstSentence(row.analysis.summary);
+  return out;
+}
+
 /** The walk with each note's summary line, read for the notes shown only. */
 export async function withSummaries(admin: Db, userId: string, walk: Walk): Promise<Walk> {
-  const ids = walk.nodes.flatMap((n) => (n.kind === "note" ? [n.note.id] : []));
-  if (!ids.length) return walk;
-  const { data, error } = await admin.from("recordings").select("id, analysis").eq("user_id", userId).in("id", ids);
-  if (error) throw new Error(error.message);
-  const lines = new Map<string, string>();
-  for (const row of (data || []) as { id: string; analysis: { summary?: string } | null }[]) if (row.analysis?.summary) lines.set(row.id, firstSentence(row.analysis.summary));
-  return { ...walk, nodes: walk.nodes.map((n) => (n.kind === "note" ? { ...n, summary: lines.get(n.note.id) ?? null } : n)) };
+  const lines = await summariesOf(admin, userId, walk.nodes.flatMap((n) => (n.kind === "note" ? [n.note.id] : [])));
+  return { ...walk, nodes: walk.nodes.map((n) => (n.kind === "note" ? { ...n, summary: lines[n.note.id] ?? null } : n)) };
+}
+
+/**
+ * What the browser needs to walk by itself: every note in use by name, date
+ * and tags, and how notes reach each other — no text. A store past
+ * `STORE_NOTES_MAX` is not sent (`more`), and the walk asks the server per
+ * click instead, so a very large store never pays this wait.
+ */
+export const STORE_NOTES_MAX = 3000;
+/** Where the browser asks for it, and what a change to a note refreshes. */
+export const WALK_STORE_URL = "/api/notes/walk-store";
+export type WalkStore = {
+  more: boolean;
+  rows: TagRow[];
+  notes: WebNote[];
+  links: WebLink[];
+  facts: { recording_id: string; subject: string }[];
+  themes: { name: string; evidence: string[] }[];
+};
+
+export function storeOf(input: WebInput): WalkStore {
+  if (input.notes.length > STORE_NOTES_MAX) return { more: true, rows: [], notes: [], links: [], facts: [], themes: [] };
+  // Only what groups notes: a subject said by more notes than that joins nothing (`SUBJECT_MAX_NOTES`).
+  const said = new Map<string, Set<string>>();
+  for (const f of input.facts) said.set(f.subject.trim(), (said.get(f.subject.trim()) ?? new Set()).add(f.recording_id));
+  const facts: { recording_id: string; subject: string }[] = [];
+  for (const [subject, ids] of said) if (subject && ids.size > 1 && ids.size <= SUBJECT_MAX_NOTES) for (const id of ids) facts.push({ recording_id: id, subject });
+  // Named field by field: whatever a read returned beyond these never reaches the browser.
+  const notes = input.notes.map((n) => ({ id: n.id, path: n.path, label: n.label, recorded_at: n.recorded_at, tags: n.tags }));
+  return { more: false, rows: input.rows, notes, links: input.links, facts, themes: input.themes };
+}
+
+/** The walk's inputs, back from what the browser holds. */
+export function inputOf(store: WalkStore): WebInput {
+  return { rows: store.rows, kept: [], asked: [], notes: store.notes, links: store.links, facts: store.facts, themes: store.themes };
 }

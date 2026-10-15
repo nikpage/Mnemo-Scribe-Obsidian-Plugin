@@ -6,8 +6,8 @@ import { preload } from "swr";
 import { allAnswered, api, useApi } from "@/lib/api";
 import { useLang } from "@/hooks/use-lang";
 import { formatDateShort, formatFactDate } from "@/lib/format";
-import type { Walk, WalkEdge, WalkNode } from "@/lib/note/walk";
-import { type Layout, layoutWalk } from "@/lib/note/walk-layout";
+import { type Walk, type WalkEdge, type WalkNode, type WalkStore, WALK_STORE_URL, buildWalk, defaultCentre, inputOf } from "@/lib/note/walk";
+import { type Layout, type Side, layoutWalk } from "@/lib/note/walk-layout";
 import { NoteLink } from "@/components/note-link";
 import { PHRASE } from "@/components/note-links";
 import { Button, Notice } from "@/components/ui";
@@ -45,8 +45,8 @@ function wantsStill(): boolean {
 }
 
 type Mode = "stay" | "enter" | "leave";
-type Drawn = { node: WalkNode; x0: number; y0: number; x1: number; y1: number; r: number; named: boolean; label: string; mode: Mode };
-type Scene = { nodes: Map<string, Drawn>; edges: Map<string, { edge: WalkEdge; mode: Mode }>; walk: Walk; layout: Layout; /** The centre moved, so the picture glides and rings once. */ moved: boolean };
+type Drawn = { node: WalkNode; x0: number; y0: number; x1: number; y1: number; r: number; named: Side | null; label: string; mode: Mode };
+type Scene = { nodes: Map<string, Drawn>; edges: Map<string, { edge: WalkEdge; mode: Mode }>; walk: Walk; layout: Layout; /** The centre moved, so the picture rings once. */ moved: boolean; /** Whether it glides to its places; the first drawing and reduced motion do not. */ animate: boolean };
 
 /**
  * What is on the screen and where it is going. A new walk keeps what both
@@ -56,57 +56,51 @@ type Scene = { nodes: Map<string, Drawn>; edges: Map<string, { edge: WalkEdge; m
 function useGlide(walk: Walk | null, layout: Layout | null) {
   const [scene, setScene] = useState<Scene | null>(null);
   const [k, setK] = useState(1);
-  const clock = useRef({ at: 0, k: 1, raf: 0 });
-  const drawnOnce = useRef(false);
+  const [reduced] = useState(wantsStill);
 
-  useEffect(() => {
-    if (!walk || !layout) return;
-    // The first drawing, and a reload, never move: only a tap does.
-    const still = wantsStill() || !drawnOnce.current;
-    drawnOnce.current = true;
-    setScene((prev) => {
-      const e = ease(clock.current.k);
-      const shown = new Map<string, { x: number; y: number }>();
-      for (const [id, d] of prev?.nodes ?? []) shown.set(id, { x: d.x0 + (d.x1 - d.x0) * e, y: d.y0 + (d.y1 - d.y0) * e });
-      const nodes = new Map<string, Drawn>();
-      const centre = layout.placed.get(walk.centre);
-      for (const node of walk.nodes) {
-        const p = layout.placed.get(node.id)!;
-        const old = shown.get(node.id);
-        const start = old ?? (node.from ? (shown.get(node.from) ?? layout.placed.get(node.from)) : undefined) ?? centre ?? p;
-        nodes.set(node.id, { node, x0: still ? p.x : start.x, y0: still ? p.y : start.y, x1: p.x, y1: p.y, r: p.r, named: p.named, label: p.label, mode: old ? "stay" : "enter" });
-      }
-      const edges = new Map<string, { edge: WalkEdge; mode: Mode }>();
-      for (const edge of walk.edges) edges.set(edge.id, { edge, mode: prev?.edges.has(edge.id) ? "stay" : "enter" });
-      if (prev && !still) {
-        for (const [id, d] of prev.nodes) {
-          if (nodes.has(id) || d.mode === "leave") continue;
-          const at = shown.get(id)!;
-          nodes.set(id, { ...d, x0: at.x, y0: at.y, x1: at.x, y1: at.y, mode: "leave" });
-        }
-        for (const [id, held] of prev.edges) if (!edges.has(id) && held.mode !== "leave") edges.set(id, { edge: held.edge, mode: "leave" });
-      }
-      return { nodes, edges, walk, layout, moved: !!prev && prev.walk.centre !== walk.centre };
-    });
-    const c = clock.current;
-    cancelAnimationFrame(c.raf);
-    if (still) {
-      c.k = 1;
-      setK(1);
-      return;
+  // A new walk (or a new size) replaces the picture while it is being drawn, from where everything is
+  // right now, even part-way through a move. The very first drawing, and a reload, never move.
+  if (walk && layout && (!scene || scene.walk !== walk || scene.layout !== layout)) {
+    const still = reduced || !scene;
+    const e0 = ease(k);
+    const shown = new Map<string, { x: number; y: number }>();
+    for (const [id, d] of scene?.nodes ?? []) shown.set(id, { x: d.x0 + (d.x1 - d.x0) * e0, y: d.y0 + (d.y1 - d.y0) * e0 });
+
+    const nodes = new Map<string, Drawn>();
+    const centre = layout.placed.get(walk.centre);
+    for (const node of walk.nodes) {
+      const p = layout.placed.get(node.id)!;
+      const old = shown.get(node.id);
+      const start = old ?? (node.from ? (shown.get(node.from) ?? layout.placed.get(node.from)) : undefined) ?? centre ?? p;
+      nodes.set(node.id, { node, x0: still ? p.x : start.x, y0: still ? p.y : start.y, x1: p.x, y1: p.y, r: p.r, named: p.named, label: p.label, mode: old ? "stay" : "enter" });
     }
-    c.at = performance.now();
-    c.k = 0;
-    setK(0);
+    const edges = new Map<string, { edge: WalkEdge; mode: Mode }>();
+    for (const edge of walk.edges) edges.set(edge.id, { edge, mode: scene?.edges.has(edge.id) ? "stay" : "enter" });
+    if (scene && !still) {
+      for (const [id, d] of scene.nodes) {
+        if (nodes.has(id) || d.mode === "leave") continue;
+        const at = shown.get(id)!;
+        nodes.set(id, { ...d, x0: at.x, y0: at.y, x1: at.x, y1: at.y, mode: "leave" });
+      }
+      for (const [id, held] of scene.edges) if (!edges.has(id) && held.mode !== "leave") edges.set(id, { edge: held.edge, mode: "leave" });
+    }
+    setScene({ nodes, edges, walk, layout, moved: !!scene && scene.walk.centre !== walk.centre, animate: !still });
+    setK(still ? 1 : 0);
+  }
+
+  // The clock for one move.
+  useEffect(() => {
+    if (!scene || !scene.animate) return;
+    const from = performance.now();
+    let raf = 0;
     const frame = (now: number) => {
-      const x = Math.min(1, (now - c.at) / GLIDE_MS);
-      c.k = x;
+      const x = Math.min(1, (now - from) / GLIDE_MS);
       setK(x);
-      if (x < 1) c.raf = requestAnimationFrame(frame);
+      if (x < 1) raf = requestAnimationFrame(frame);
     };
-    c.raf = requestAnimationFrame(frame);
-    return () => cancelAnimationFrame(c.raf);
-  }, [walk, layout]);
+    raf = requestAnimationFrame(frame);
+    return () => cancelAnimationFrame(raf);
+  }, [scene]);
 
   return { scene, e: ease(k) };
 }
@@ -124,8 +118,27 @@ export function WebView() {
   const { t, lang } = useLang();
   const [at, setAt] = useState<Where | null>(null);
   const [trail, setTrail] = useState<{ at: Where | null; name: string }[]>([]);
-  const res = useApi<Walk>(url(at), { keepPreviousData: true });
-  const walk = res.data ?? null;
+  // The walk is worked out here from a slim copy of the store (names, dates, tags, links; no text), so a
+  // click needs no server. A store too large to send is walked by the server, one click at a time.
+  const store = useApi<WalkStore>(WALK_STORE_URL, { revalidateOnFocus: false, keepPreviousData: true });
+  const serverMode = store.data?.more === true;
+  const remote = useApi<Walk>(serverMode ? url(at) : null, { keepPreviousData: true });
+  const input = useMemo(() => (store.data && !store.data.more ? inputOf(store.data) : null), [store.data]);
+  const here = useMemo(() => {
+    if (!input) return null;
+    const from = at ?? defaultCentre(input);
+    return from ? buildWalk(input, from) : null;
+  }, [input, at]);
+  const res = serverMode ? remote : store;
+  const walk = serverMode ? (remote.data ?? null) : here;
+
+  // The first sentence of each note shown, asked for the notes in view; the picture never waits on it.
+  const noteIds = useMemo(() => (walk && !serverMode ? walk.nodes.flatMap((n) => (n.kind === "note" ? [n.note.id] : [])).sort().join(",") : ""), [walk, serverMode]);
+  const lines = useApi<{ summaries: Record<string, string> }>(noteIds ? `/api/notes/walk-summaries?ids=${encodeURIComponent(noteIds)}` : null, {
+    keepPreviousData: true,
+    revalidateOnFocus: false,
+  });
+  const summaryOf = (n: Extract<WalkNode, { kind: "note" }>) => n.summary ?? lines.data?.summaries[n.note.id] ?? null;
 
   const [stage, setStage] = useState<HTMLDivElement | null>(null);
   const [width, setWidth] = useState(0);
@@ -146,8 +159,8 @@ export function WebView() {
   const [picked, setPicked] = useState<string | null>(null);
   // A line of the lit bubble, pointed at to read why it is there.
   const [line, setLine] = useState<string | null>(null);
-  // The bubble just chosen: it stays lit through the wait and the glide, so the picture never flashes to everything at once.
-  const [held, setHeld] = useState<string | null>(null);
+  // The bubble just chosen, marked at once while its walk is on the way.
+  const [chosen, setChosen] = useState<string | null>(null);
   const touch = useRef(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const cancelAim = () => {
@@ -165,14 +178,10 @@ export function WebView() {
   };
   useEffect(() => cancelAim, []);
 
-  // The bubble chosen stays lit until the walk it asked for has arrived and settled, or has failed.
-  const settled = !!scene && !!held && scene.walk.centre === held && e >= 1;
-  const heldId = held && !settled && !res.error ? held : null;
-
-  // What is lit: the thing pointed at and what touches it.
+  // What is lit: the thing pointed at and what touches it. Something that is not in this picture lights nothing.
   const lit = useMemo(() => {
-    const id = hover ?? picked ?? heldId;
-    if (!id || !walk) return null;
+    const id = hover ?? picked;
+    if (!id || !walk || !(walk.nodes.some((n) => n.id === id) || walk.edges.some((x) => x.id === id))) return null;
     const nodes = new Set<string>();
     const edges = new Set<string>();
     const edge = walk.edges.find((x) => x.id === id);
@@ -188,16 +197,22 @@ export function WebView() {
       }
     }
     return { id, nodes, edges };
-  }, [hover, picked, heldId, walk]);
+  }, [hover, picked, walk]);
+
+  // The last thing pointed at stays in the reading strip below the picture until another is,
+  // so the pointer can travel to it without it changing on the way.
+  const [kept, setKept] = useState<string | null>(null);
+  if (lit && lit.id !== kept) setKept(lit.id);
 
   if (!allAnswered(res)) return null;
 
   if (!walk || !scene) {
-    const none = res.error && typeof res.error === "object" && "status" in res.error && (res.error as { status: number }).status === 404 && !at;
+    const gone = res.error && typeof res.error === "object" && "status" in res.error && (res.error as { status: number }).status === 404;
+    const empty = !res.error && !walk;
     return (
       <div>
         <h1 className="mb-2 text-2xl font-bold">{t("webTitle")}</h1>
-        {res.error ? <Notice tone="error">{none ? t("webEmpty") : t("webFailed")}</Notice> : <div ref={setStage} className="w-full" />}
+        {res.error || empty ? <Notice tone={empty || gone ? "info" : "error"}>{empty || gone ? t("webEmpty") : t("webFailed")}</Notice> : <div ref={setStage} className="w-full" />}
       </div>
     );
   }
@@ -211,7 +226,8 @@ export function WebView() {
     setHover(null);
     setPicked(null);
     setLine(null);
-    setHeld(node.id);
+    setKept(null);
+    setChosen(node.id);
   };
   const back = () => {
     const last = trail[trail.length - 1];
@@ -222,7 +238,8 @@ export function WebView() {
     setHover(null);
     setPicked(null);
     setLine(null);
-    setHeld(null);
+    setKept(null);
+    setChosen(null);
   };
 
   const pos = (d: Drawn) => {
@@ -233,10 +250,13 @@ export function WebView() {
   const where = new Map(drawn.map((d) => [d.node.id, pos(d)]));
   const dimOf = (id: string, kind: "node" | "edge") => (!lit ? 1 : (kind === "node" ? lit.nodes : lit.edges).has(id) ? 1 : DIM);
   const alone = walk.nodes.length === 1;
+  // The bubble chosen, until the walk it asked for has arrived or failed.
+  const pending = chosen && walk.centre !== chosen && !res.error ? chosen : null;
 
-  const pointedLine = line ? (walk.edges.find((x) => x.id === line) ?? null) : null;
-  const cardOf = lit && !pointedLine ? (scene.nodes.get(lit.id)?.node ?? null) : null;
-  const cardEdge = pointedLine ?? (lit && !cardOf ? (walk.edges.find((x) => x.id === lit.id) ?? null) : null);
+  const stripId = line ?? kept;
+  const stripNode = stripId ? (walk.nodes.find((n) => n.id === stripId) ?? null) : null;
+  const stripEdge = stripId && !stripNode ? (walk.edges.find((x) => x.id === stripId) ?? null) : null;
+  const ringOf = new Map(walk.nodes.map((n) => [n.id, n.ring]));
 
   return (
     <div>
@@ -256,7 +276,7 @@ export function WebView() {
           </NoteLink>
         )}
         {centre.kind === "tag" && centre.meaning && <p className="w-full text-sm text-muted-foreground">{centre.meaning}</p>}
-        {centre.kind === "note" && centre.summary && <p className="w-full text-sm text-muted-foreground">{centre.summary}</p>}
+        {centre.kind === "note" && summaryOf(centre) && <p className="w-full text-sm text-muted-foreground">{summaryOf(centre)}</p>}
       </div>
 
       <div
@@ -281,6 +301,7 @@ export function WebView() {
               onClick={() => {
                 setPicked(null);
                 setLine(null);
+                setKept(null);
               }}
             />
             <defs>
@@ -334,14 +355,16 @@ export function WebView() {
               if (!a || !b) return null;
               const alpha = (mode === "leave" ? 1 - e : mode === "enter" ? e : 1) * dimOf(edge.id, "edge");
               const d = curve(a.x, a.y, b.x, b.y, edge.kind === "under" ? 0.08 : 0.14);
-              const look =
-                edge.kind === "link"
-                  ? { className: "stroke-primary", width: 2.2, dash: undefined }
-                  : edge.kind === "under"
-                    ? { className: "stroke-muted-foreground", width: 1.6, dash: undefined }
-                    : edge.kind === "carries"
-                      ? { className: "stroke-primary/60", width: 1.2, dash: undefined }
-                      : { className: "stroke-muted-foreground", width: 1.4, dash: "1 6" };
+              // One colour for what is near the centre, grey for two steps, lighter grey for three; a lit line is always teal.
+              const reach = Math.max(ringOf.get(edge.a) ?? 0, ringOf.get(edge.b) ?? 0);
+              const near = edge.kind === "link"
+                ? { className: "stroke-primary", width: 2.2, dash: undefined }
+                : edge.kind === "under"
+                  ? { className: "stroke-muted-foreground", width: 1.6, dash: undefined }
+                  : edge.kind === "carries"
+                    ? { className: "stroke-primary/60", width: 1.2, dash: undefined }
+                    : { className: "stroke-muted-foreground", width: 1.4, dash: "1 6" };
+              const look = lit?.edges.has(edge.id) || reach <= 1 ? near : reach === 2 ? { ...near, className: "stroke-muted-foreground" } : { ...near, className: "stroke-border", width: near.width * 0.85 };
               return (
                 <g
                   key={edge.id}
@@ -378,7 +401,8 @@ export function WebView() {
                 const p = where.get(d.node.id)!;
                 const isCentre = d.node.id === walk.centre;
                 const tag = d.node.kind === "tag";
-                const alpha = p.a * dimOf(d.node.id, "node");
+                const far = d.node.ring >= 2;
+                const alpha = p.a * dimOf(d.node.id, "node") * (d.node.ring >= 3 ? 0.75 : 1);
                 const open = (ev: React.MouseEvent) => {
                   ev.stopPropagation();
                   if (touch.current && picked !== d.node.id) setPicked(d.node.id);
@@ -394,7 +418,7 @@ export function WebView() {
                     tabIndex={0}
                     aria-label={nameOf(d.node)}
                     onPointerEnter={(ev) => {
-                      if (ev.pointerType !== "touch") aim(d.node.id, REST_MS, whereOf(d.node));
+                      if (ev.pointerType !== "touch") aim(d.node.id, REST_MS, serverMode ? whereOf(d.node) : undefined);
                     }}
                     onPointerLeave={cancelAim}
                     onPointerDown={(ev) => {
@@ -404,9 +428,32 @@ export function WebView() {
                     onKeyDown={(ev) => ev.key === "Enter" && go(d.node)}
                   >
                     <circle r={Math.max(d.r + 6, 18)} fill="transparent" />
-                    <circle r={d.r + (isCentre ? 12 : 7)} className="fill-primary/30" filter="url(#walk-glow)" />
+                    <circle
+                      r={d.r + (isCentre ? 12 : 7)}
+                      className={far ? "fill-current text-muted-foreground" : "fill-primary/30"}
+                      fillOpacity={far ? 0.3 : undefined}
+                      filter="url(#walk-glow)"
+                    />
+                    {pending === d.node.id && (
+                      <circle r={d.r + 10} fill="none" className="stroke-primary" strokeWidth={2}>
+                        {!wantsStill() && <animate attributeName="opacity" values="0.9;0.25;0.9" dur="0.9s" repeatCount="indefinite" />}
+                      </circle>
+                    )}
                     {isCentre && scene.moved && e < 1 && <circle r={d.r + 8 + 46 * e} fill="none" className="stroke-primary" strokeWidth={2} opacity={0.7 * (1 - e)} />}
-                    <circle r={d.r} className={tag ? "fill-primary/15 stroke-primary" : "fill-primary stroke-card"} strokeWidth={isCentre ? 3 : 1.6} />
+                    <circle
+                      r={d.r}
+                      className={
+                        far
+                          ? tag
+                            ? "fill-current text-muted-foreground stroke-muted-foreground"
+                            : "fill-current text-muted-foreground stroke-card"
+                          : tag
+                            ? "fill-primary/15 stroke-primary"
+                            : "fill-primary stroke-card"
+                      }
+                      fillOpacity={far && tag ? 0.15 : undefined}
+                      strokeWidth={isCentre ? 3 : 1.6}
+                    />
                     {tag && d.node.kind === "tag" && (
                       <text textAnchor="middle" dy="0.35em" fontSize={Math.max(11, Math.min(15, d.r * 0.7))} fontWeight={600} className="fill-current">
                         {d.node.count}
@@ -414,8 +461,9 @@ export function WebView() {
                     )}
                     {d.named && (
                       <text
-                        y={d.r + 15}
-                        textAnchor="middle"
+                        x={d.named === "right" ? d.r + 6 : d.named === "left" ? -(d.r + 6) : 0}
+                        y={d.named === "below" ? d.r + 15 : d.named === "above" ? -(d.r + 6) : 4}
+                        textAnchor={d.named === "right" ? "start" : d.named === "left" ? "end" : "middle"}
                         fontSize={12}
                         fontWeight={tag || isCentre ? 600 : 400}
                         className="fill-current stroke-card"
@@ -432,17 +480,23 @@ export function WebView() {
           </svg>
         )}
 
-        {layout && cardOf && lit && (
-          <Card at={where.get(lit.id)} r={scene.nodes.get(lit.id)?.r ?? 8} size={layout}>
-            {cardOf.kind === "note" ? <NoteCard node={cardOf} lang={lang} t={t} /> : <TagCard node={cardOf} t={t} />}
-          </Card>
-        )}
-        {layout && cardEdge && lit && (
-          <Card at={midpoint(where.get(cardEdge.a), where.get(cardEdge.b))} r={0} size={layout}>
-            <EdgeCard edge={cardEdge} walk={walk} t={t} />
-          </Card>
-        )}
         {alone && <p className="text-center text-sm text-muted-foreground" style={{ position: "absolute", bottom: 40, left: 16, right: 16 }}>{t("walkAlone")}</p>}
+      </div>
+
+      <div style={{ minHeight: 104 }} className="mt-2" aria-live="polite">
+        {(stripNode || stripEdge) && (
+          <div className="rounded-2xl border border-border bg-card p-3 text-sm">
+            {stripNode ? (
+              stripNode.kind === "note" ? (
+                <NoteCard node={stripNode} summary={summaryOf(stripNode)} lang={lang} t={t} />
+              ) : (
+                <TagCard node={stripNode} t={t} />
+              )
+            ) : (
+              stripEdge && <EdgeCard edge={stripEdge} walk={walk} t={t} />
+            )}
+          </div>
+        )}
       </div>
 
       <div className="mt-2 flex flex-wrap gap-3 text-xs text-muted-foreground">
@@ -463,23 +517,7 @@ export function WebView() {
   );
 }
 
-const midpoint = (a?: { x: number; y: number }, b?: { x: number; y: number }) => (a && b ? { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 } : undefined);
-
-/** A card below the thing it describes (above, low in the picture). It never takes the pointer, so a click always reaches the bubble. */
-function Card({ at, r, size, children }: { at?: { x: number; y: number }; r: number; size: Layout; children: React.ReactNode }) {
-  if (!at) return null;
-  const W = Math.min(300, size.width - 16);
-  const left = Math.max(8, Math.min(size.width - W - 8, at.x - W / 2));
-  const above = at.y > size.height * 0.55;
-  const gap = r + 24;
-  return (
-    <div style={{ position: "absolute", left, width: W, ...(above ? { bottom: size.height - at.y + r + 8 } : { top: at.y + gap }), zIndex: 5, pointerEvents: "none" }}>
-      <div className="rounded-2xl border border-border bg-card p-3 text-sm">{children}</div>
-    </div>
-  );
-}
-
-function NoteCard({ node, lang, t }: { node: Extract<WalkNode, { kind: "note" }>; lang: Lang; t: T }) {
+function NoteCard({ node, summary, lang, t }: { node: Extract<WalkNode, { kind: "note" }>; summary: string | null; lang: Lang; t: T }) {
   return (
     <div>
       <p className="font-medium">{node.note.title}</p>
@@ -487,8 +525,8 @@ function NoteCard({ node, lang, t }: { node: Extract<WalkNode, { kind: "note" }>
         {formatDateShort(node.at, lang)}
         {node.tags.length > 0 && ` · ${node.tags.map((tag) => `#${tag}`).join(" ")}`}
       </p>
-      {node.summary && <p className="mb-2 text-muted-foreground">{node.summary}</p>}
-      <NoteLink note={node.note} className="font-medium hover:underline" style={{ pointerEvents: "auto" }}>
+      {summary && <p className="mb-2 text-muted-foreground">{summary}</p>}
+      <NoteLink note={node.note} className="mt-2 block rounded-2xl border border-border p-3 text-center font-medium hover:underline">
         {t("walkOpen")}
       </NoteLink>
     </div>

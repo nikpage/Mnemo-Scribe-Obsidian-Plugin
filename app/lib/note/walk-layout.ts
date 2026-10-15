@@ -14,7 +14,8 @@ const STEP = 74;
 /** Narrower than this, time runs down the screen instead of across it. */
 export const WIDE = 640;
 
-export type Placed = { id: string; x: number; y: number; r: number; /** Its name is written beside it. */ named: boolean; label: string };
+export type Side = "below" | "above" | "right" | "left";
+export type Placed = { id: string; x: number; y: number; r: number; /** Its name is written on this side of it, or nowhere. */ named: Side | null; label: string };
 /** `at` is the place along the time axis. */
 export type Tick = { at: number; iso: string; kind: "month" | "year" };
 /** A long silence between two notes, drawn as a break instead of empty room. */
@@ -86,7 +87,15 @@ export function layoutWalk(walk: Walk, width: number, height: number): Layout {
   const span = from !== null && to !== null ? to - from : 0;
   const moments = slots(times);
   const last = moments.length ? moments[moments.length - 1].slot : 0;
-  const slotAt = (slot: number) => (last > 0 ? MARGIN + (slot / last) * (U - 2 * MARGIN) : U / 2);
+  // The centre sits in the middle; what is older is to its left and what is newer to its right,
+  // each side filling its own half however few notes it holds.
+  const centreAt = Date.parse(walk.nodes.find((n) => n.id === walk.centre)?.at ?? "");
+  const centreSlot = moments.length ? (moments.find((m) => m.at === centreAt) ?? moments.reduce((best, m) => (Math.abs(m.at - centreAt) < Math.abs(best.at - centreAt) ? m : best))).slot : 0;
+  const half = U / 2 - MARGIN;
+  const slotAt = (slot: number) => {
+    if (slot <= centreSlot) return centreSlot > 0 ? U / 2 - ((centreSlot - slot) / centreSlot) * half : U / 2;
+    return last > centreSlot ? U / 2 + ((slot - centreSlot) / (last - centreSlot)) * half : U / 2;
+  };
   const exact = new Map(moments.map((o) => [o.at, slotAt(o.slot)]));
   /** Where a moment falls: on its note's slot, or between the slots either side of it. */
   const place = (ms: number): number => {
@@ -127,7 +136,7 @@ export function layoutWalk(walk: Walk, width: number, height: number): Layout {
       const side = k % 2 === 0 ? away : -away;
       v = parent.v + side * (STEP * (0.55 + 0.45 * Math.ceil((k + 1) / 2)) + hash(n.id) * 18);
     }
-    at.set(n.id, { id: n.id, u, v: clampV(v), r: radius(n), label: short(labelOf(n)) });
+    at.set(n.id, { id: n.id, u, v: clampV(v), r: radius(n), label: short(labelOf(n), along === "x" ? 22 : 15) });
   }
 
   // Keep things apart, mostly across the time axis so that time stays true.
@@ -170,24 +179,33 @@ export function layoutWalk(walk: Walk, width: number, height: number): Layout {
   const placed = new Map<string, Placed>();
   for (const p of list) {
     const [x, y] = along === "x" ? [p.u, p.v] : [p.v, p.u];
-    placed.set(p.id, { id: p.id, x, y, r: p.r, named: false, label: p.label });
+    placed.set(p.id, { id: p.id, x, y, r: p.r, named: null, label: p.label });
   }
 
-  // Names, most important first, each only where it does not run into another thing.
+  // Names, most important first, each beside its bubble where it does not run into anything:
+  // below, else above, else to the right, else to the left.
   type Box = { x0: number; x1: number; y0: number; y1: number };
   const hit = (a: Box, b: Box) => a.x0 < b.x1 && a.x1 > b.x0 && a.y0 < b.y1 && a.y1 > b.y0;
-  const bodies = new Map<string, Box>([...placed.values()].map((p) => [p.id, { x0: p.x - p.r, x1: p.x + p.r, y0: p.y - p.r, y1: p.y + p.r }]));
+  const bodies = new Map<string, Box>([...placed.values()].map((p) => [p.id, { x0: p.x - p.r - 2, x1: p.x + p.r + 2, y0: p.y - p.r - 2, y1: p.y + p.r + 2 }]));
   const taken: Box[] = [];
-  const order = [...walk.nodes].sort((a, b) => (a.ring === 0 ? -1 : b.ring === 0 ? 1 : 0) || (a.kind === b.kind ? a.ring - b.ring : a.kind === "tag" ? -1 : 1) || a.id.localeCompare(b.id));
-  for (const n of order) {
-    const p = placed.get(n.id)!;
+  const inside = (b: Box) => b.x0 >= 2 && b.x1 <= width - 2 && b.y0 >= 2 && b.y1 <= height - 28;
+  const boxAt = (p: Placed, side: Side): Box => {
     const w = p.label.length * 6.8 + 8;
-    const box = { x0: p.x - w / 2, x1: p.x + w / 2, y0: p.y + p.r + 2, y1: p.y + p.r + 18 };
-    const clash = taken.some((t) => hit(box, t)) || [...bodies].some(([id, t]) => id !== p.id && hit(box, t));
-    // The centre and tags are always named; a note only where there is room.
-    if (!clash || n.ring === 0 || n.kind === "tag") {
-      p.named = true;
-      taken.push(box);
+    if (side === "below") return { x0: p.x - w / 2, x1: p.x + w / 2, y0: p.y + p.r + 2, y1: p.y + p.r + 18 };
+    if (side === "above") return { x0: p.x - w / 2, x1: p.x + w / 2, y0: p.y - p.r - 18, y1: p.y - p.r - 2 };
+    if (side === "right") return { x0: p.x + p.r + 4, x1: p.x + p.r + 4 + w, y0: p.y - 9, y1: p.y + 9 };
+    return { x0: p.x - p.r - 4 - w, x1: p.x - p.r - 4, y0: p.y - 9, y1: p.y + 9 };
+  };
+  const priority = [...walk.nodes].sort((a, b) => (a.ring === 0 ? -1 : b.ring === 0 ? 1 : 0) || (a.kind === b.kind ? a.ring - b.ring : a.kind === "tag" ? -1 : 1) || a.id.localeCompare(b.id));
+  for (const n of priority) {
+    const p = placed.get(n.id)!;
+    const free = (box: Box) => inside(box) && !taken.some((t) => hit(box, t)) && ![...bodies].some(([id, t]) => id !== p.id && hit(box, t));
+    const side = (["below", "above", "right", "left"] as Side[]).find((s) => free(boxAt(p, s)));
+    // The centre and tags are always named, even over something; a note only where there is room.
+    const chosen = side ?? (n.ring === 0 || n.kind === "tag" ? "below" : null);
+    if (chosen) {
+      p.named = chosen;
+      taken.push(boxAt(p, chosen));
     }
   }
 

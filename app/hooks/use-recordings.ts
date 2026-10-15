@@ -8,6 +8,7 @@ import { forgetPages } from "@/lib/offline-pages";
 import { createClient } from "@/lib/supabase/client";
 import { listFieldsOf } from "@/lib/note/list-columns";
 import { type NotesPage, isPageUrl } from "@/lib/note/notes-page";
+import { WALK_STORE_URL } from "@/lib/note/walk";
 import { COUNTS_URL } from "@/hooks/use-notes-page";
 import type { Shelf } from "@/lib/note/shelf";
 
@@ -83,6 +84,14 @@ export function useRecordings(userId?: string) {
   }, [mutateKeys]);
   useEffect(() => () => void (timer.current && clearTimeout(timer.current)), []);
 
+  // The Web's copy of the store (`lib/note/walk.ts`), asked again after the writes to a note settle.
+  const walkTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const refreshWalk = useCallback(() => {
+    if (walkTimer.current) clearTimeout(walkTimer.current);
+    walkTimer.current = setTimeout(() => void mutateKeys(WALK_STORE_URL), 1500);
+  }, [mutateKeys]);
+  useEffect(() => () => void (walkTimer.current && clearTimeout(walkTimer.current)), []);
+
   const refetch = useCallback(() => {
     void mutate();
     relist();
@@ -123,6 +132,7 @@ export function useRecordings(userId?: string) {
           const row = raw?.id ? listFieldsOf<Recording>(raw) : null;
           const id = row?.id ?? (payload.old as { id?: string } | null)?.id;
           if (!id) return;
+          refreshWalk();
           const onItsWay = row !== null && row.status !== "done" && row.shelf === "normal";
           void mutate(
             (held) => {
@@ -149,7 +159,7 @@ export function useRecordings(userId?: string) {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [userId, mutate, mutateKeys, cache, relist]);
+  }, [userId, mutate, mutateKeys, cache, relist, refreshWalk]);
 
   // A transcript is finished by the provider calling us back. Where it can't
   // reach us we ask instead, on the same cadence, until nothing is in flight.
