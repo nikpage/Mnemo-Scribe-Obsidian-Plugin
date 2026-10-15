@@ -44,6 +44,15 @@ export function useApi<T>(url: string | null, config?: SWRConfiguration<T>) {
   return useSWR<T>(url, (key: string) => api<T>(key), config);
 }
 
+/**
+ * What a request has answered for the address now asked. An earlier answer kept on
+ * screen while the new one is on its way (`keepPreviousData`) is not it: a price
+ * kept that way would read as the price of a choice it was never worked out for.
+ */
+export function answeredNow<T>(res: { data?: T; isLoading: boolean }): T | undefined {
+  return res.isLoading ? undefined : res.data;
+}
+
 /** Whether a request has come back, well or not. */
 export function answered(res: { data?: unknown; error?: unknown }): boolean {
   return res.data !== undefined || res.error !== undefined;

@@ -2,7 +2,7 @@
 
 // [Guru]
 import { useMemo, useState } from "react";
-import { ApiError, allAnswered, send, useApi } from "@/lib/api";
+import { ApiError, allAnswered, answeredNow, send, useApi } from "@/lib/api";
 import { useCounts } from "@/hooks/use-notes-page";
 import { tagsByUse } from "@/lib/note/notes-page";
 import { busyUntilDone } from "@/lib/busy";
@@ -285,7 +285,8 @@ export function BrainReading({
   // Priced on stand-in words: the wording never changes the price, so typing asks nothing.
   const priced = readingOf({ ...choice, topics: topics.length ? ["topic"] : [] }, "topic");
   const quote = useApi<Quote>(quoteUrl(priced.scope, priced.target), { keepPreviousData: true });
-  const price = quote.data;
+  // The price of what is chosen now: nothing, its slot held, while a changed choice is being priced.
+  const price = answeredNow(quote);
   const why = price?.credits != null ? t("costReading", { n: price.credits, notes: price.notes ?? 0, balance: price.balance ?? 0 }) : undefined;
   const busy = reading.pressed === "read" || reading.reading?.status === "running";
   const none = price?.credits === null;
