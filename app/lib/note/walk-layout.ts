@@ -76,7 +76,11 @@ function ticksFor(from: number, to: number, place: (ms: number) => number, spare
   return out;
 }
 
-export function layoutWalk(walk: Walk, width: number, height: number): Layout {
+/** Several anchors in one picture: their node ids and, for each node, the anchors whose walk holds it. */
+export type Anchoring = { ids: string[]; reach: Map<string, string[]> };
+
+export function layoutWalk(walk: Walk, width: number, height: number, anchoring?: Anchoring): Layout {
+  const multi = !!anchoring && anchoring.ids.length > 1;
   const along: "x" | "y" = width >= WIDE ? "x" : "y";
   // u runs along time, v across it.
   const U = along === "x" ? width : height;
@@ -89,7 +93,9 @@ export function layoutWalk(walk: Walk, width: number, height: number): Layout {
   const last = moments.length ? moments[moments.length - 1].slot : 0;
   // The centre sits in the middle; what is older is to its left and what is newer to its right,
   // each side filling its own half however few notes it holds.
-  const centreAt = Date.parse(walk.nodes.find((n) => n.id === walk.centre)?.at ?? "");
+  // With several anchors, the one in the middle by date.
+  const refId = multi ? [...anchoring!.ids].sort((a, b) => (walk.nodes.find((n) => n.id === a)?.at ?? "").localeCompare(walk.nodes.find((n) => n.id === b)?.at ?? ""))[Math.floor(anchoring!.ids.length / 2)] : walk.centre;
+  const centreAt = Date.parse(walk.nodes.find((n) => n.id === refId)?.at ?? "");
   const centreSlot = moments.length ? (moments.find((m) => m.at === centreAt) ?? moments.reduce((best, m) => (Math.abs(m.at - centreAt) < Math.abs(best.at - centreAt) ? m : best))).slot : 0;
   const half = U / 2 - MARGIN;
   const slotAt = (slot: number) => {
@@ -123,12 +129,42 @@ export function layoutWalk(walk: Walk, width: number, height: number): Layout {
   const at = new Map<string, P>();
   const kids = new Map<string, number>();
 
+  // Several anchors: each sits in its own row across the time axis; a node held by two or more stays
+  // between those anchors, a node held by one stays on that anchor's outer side, away from the others.
+  const rowOf = new Map<string, number>();
+  const bounds = new Map<string, [number, number]>();
+  const OUT = STEP * 0.5;
+  if (multi) anchoring!.ids.forEach((id, k) => rowOf.set(id, vLow + ((vHigh - vLow) * (k + 1)) / (anchoring!.ids.length + 1)));
+  const outward = (id: string): number => {
+    const mine = rowOf.get(id)!;
+    const others = [...rowOf].filter(([o]) => o !== id).map(([, r]) => r);
+    return Math.sign(mine - others.reduce((s, r) => s + r, 0) / others.length);
+  };
+
   // Outward from the centre: a node starts a step to one side of the one it came from.
   for (const n of [...walk.nodes].sort((a, b) => a.ring - b.ring || a.id.localeCompare(b.id))) {
     const ms = Date.parse(n.at);
     const u = place(Number.isFinite(ms) ? ms : (from ?? 0));
     let v = V / 2;
-    if (n.from) {
+    if (multi) {
+      const row = rowOf.get(n.id);
+      const held = (anchoring!.reach.get(n.id) ?? []).filter((a) => rowOf.has(a));
+      if (row !== undefined) {
+        v = row;
+        bounds.set(n.id, [row, row]);
+      } else if (held.length >= 2) {
+        const rows = held.map((a) => rowOf.get(a)!);
+        v = rows.reduce((s, r) => s + r, 0) / rows.length + (hash(n.id) - 0.5) * 24;
+        bounds.set(n.id, [Math.min(...rows), Math.max(...rows)]);
+      } else if (held.length === 1) {
+        const home = rowOf.get(held[0])!;
+        const k = kids.get(held[0]) ?? 0;
+        kids.set(held[0], k + 1);
+        const dir = outward(held[0]) || (k % 2 === 0 ? 1 : -1);
+        v = home + dir * (STEP * (0.55 + 0.45 * n.ring) + hash(n.id) * 18);
+        bounds.set(n.id, dir > 0 ? [home + OUT, vHigh] : [vLow, home - OUT]);
+      }
+    } else if (n.from) {
       const parent = at.get(n.from)!;
       const k = kids.get(n.from) ?? 0;
       kids.set(n.from, k + 1);
@@ -170,7 +206,8 @@ export function layoutWalk(walk: Walk, width: number, height: number): Layout {
       }
     }
     for (const p of list) {
-      p.v = clampV(p.v);
+      const b = bounds.get(p.id);
+      p.v = clampV(b ? Math.max(b[0], Math.min(b[1], p.v)) : p.v);
       p.u = Math.max(MARGIN * 0.5, Math.min(U - MARGIN * 0.5, p.u));
     }
     if (!moved) break;

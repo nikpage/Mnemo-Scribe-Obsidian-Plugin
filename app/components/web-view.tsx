@@ -2,14 +2,15 @@
 
 // [Librarian, Guru]
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { preload } from "swr";
+import useSWR, { preload } from "swr";
 import { allAnswered, api, useApi } from "@/lib/api";
 import { useLang } from "@/hooks/use-lang";
 import { formatDateShort, formatFactDate } from "@/lib/format";
 import { type Walk, type WalkEdge, type WalkNode, type WalkStore, WALK_STORE_URL, buildWalk, defaultCentre, inputOf } from "@/lib/note/walk";
 import { type Layout, type Side, layoutWalk } from "@/lib/note/walk-layout";
-import { LEVEL_WIDTH, connectionsOf, drawOrder, isStruck, levelColour, levelOfRing, listOf, nameOf, shownOf } from "@/lib/note/walk-levels";
-import { WalkList } from "@/components/walk-list";
+import { type Share, mergeWalks } from "@/lib/note/walk-set";
+import { LEVEL_WIDTH, type Row, connectionsOf, drawOrder, isStruck, levelColour, levelOfRing, listOf, nameOf, shownOf } from "@/lib/note/walk-levels";
+import { ShareGlyph, ShareMark, WalkList } from "@/components/walk-list";
 import { NoteLink } from "@/components/note-link";
 import { PHRASE } from "@/components/note-links";
 import { Button, Notice } from "@/components/ui";
@@ -31,6 +32,20 @@ type Where = { tag: string } | { note: string };
 type T = ReturnType<typeof useLang>["t"];
 type Lang = ReturnType<typeof useLang>["lang"];
 
+/** One request for the walks of a set; a tag no note carries any more is left out, and only when none is left does it fail. */
+const walksKey = (urls: string[]) => `walks:${urls.join("|")}`;
+async function fetchWalks(key: string): Promise<Walk[]> {
+  let failed: unknown;
+  const got = await Promise.all(
+    key
+      .slice("walks:".length)
+      .split("|")
+      .map((u) => api<Walk>(u).catch((e: unknown) => ((failed ??= e), null))),
+  );
+  const walks = got.filter((w): w is Walk => !!w);
+  if (!walks.length) throw failed;
+  return walks;
+}
 const url = (at: Where | null) => (!at ? "/api/notes/walk" : "tag" in at ? `/api/notes/walk?tag=${encodeURIComponent(at.tag)}` : `/api/notes/walk?note=${encodeURIComponent(at.note)}`);
 const whereOf = (n: WalkNode): Where => (n.kind === "tag" ? { tag: n.name } : { note: n.note.id });
 /** Slow in, quick through the middle, slow out: no jolt at the start, no long tail at the end. */
@@ -126,48 +141,57 @@ function curve(ax: number, ay: number, bx: number, by: number, bow: number): str
 }
 
 /**
- * The Web: one walk for each tag in the set in the address (`?set=`), stacked,
- * each with its own orange centre and its own list; a bare address is the one
- * walk from the tag with most notes.
+ * The Web: one picture for the set in the address (`?set=`), every anchor an
+ * orange centre in it, one list per anchor beside it; a bare address is the
+ * one walk from the tag with most notes.
  */
 export function WebView({ set }: { set?: WebSet }) {
-  const anchors = set?.live ?? [];
-  const struck = set?.struck ?? NO_TAGS;
-  if (!anchors.length) return <WalkPanel anchor={null} multi={false} struck={struck} />;
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 40 }}>
-      {anchors.map((tag) => (
-        <WalkPanel key={tag} anchor={tag} multi={anchors.length > 1} struck={struck} />
-      ))}
-    </div>
-  );
+  return <WalkPanel anchorKey={(set?.live ?? []).join(",")} struck={set?.struck ?? NO_TAGS} />;
 }
 
-/** One walk, started on `anchor` (a tag of the set) or on the usual centre; a walk taken since goes where it was taken. */
-function WalkPanel({ anchor, multi, struck: struckTags }: { anchor: string | null; multi: boolean; struck: string[] }) {
+/** The picture of a set's anchors, or of the usual centre; a walk taken since goes where it was taken, and Back returns. */
+function WalkPanel({ anchorKey, struck: struckTags }: { anchorKey: string; struck: string[] }) {
   const { t, lang } = useLang();
   const struck = useMemo(() => new Set(struckTags), [struckTags]);
+  const anchors = useMemo(() => (anchorKey ? anchorKey.split(",") : []), [anchorKey]);
   const [at, setAt] = useState<Where | null>(null);
-  const first = anchor ?? undefined;
-  const start: Where | null = at ?? (first ? { tag: first } : null);
+  const [picked, setPicked] = useState<string | null>(null);
+  // The bubble just chosen, marked at once while its walk is on the way.
+  const [chosen, setChosen] = useState<string | null>(null);
   const [trail, setTrail] = useState<{ at: Where | null; name: string }[]>([]);
+  const [seen, setSeen] = useState(anchorKey);
+  // A new set starts from itself: a walk taken from the old one is let go.
+  if (seen !== anchorKey) {
+    setSeen(anchorKey);
+    setAt(null);
+    setTrail([]);
+    setChosen(null);
+    setPicked(null);
+  }
   // The walk is worked out here from a slim copy of the store (names, dates, tags, links; no text), so a
   // click needs no server. A store too large to send is walked by the server, one click at a time.
   const store = useApi<WalkStore>(WALK_STORE_URL, { revalidateOnFocus: false, keepPreviousData: true });
   const serverMode = store.data?.more === true;
-  const remote = useApi<Walk>(serverMode ? url(start) : null, { keepPreviousData: true });
+  const starts: Where[] = at ? [at] : anchors.map((tag) => ({ tag }));
+  const asked = starts.length ? starts.map(url) : [url(null)];
+  const remote = useSWR<Walk[]>(serverMode ? walksKey(asked) : null, fetchWalks, { keepPreviousData: true });
   const input = useMemo(() => (store.data && !store.data.more ? inputOf(store.data) : null), [store.data]);
   const here = useMemo(() => {
     if (!input) return null;
-    const from = at ?? (first ? { tag: first } : null);
-    // A set's tag no note carries any more falls back to the usual centre.
-    const asked = from ? buildWalk(input, from) : null;
-    if (asked) return asked;
-    const usual = defaultCentre(input);
-    return usual ? buildWalk(input, usual) : null;
-  }, [input, at, first]);
+    const from: Where[] = at ? [at] : anchors.map((tag) => ({ tag }));
+    // A set's tag no note carries any more is left out; with none left it falls back to the usual centre.
+    let walks = from.map((c) => buildWalk(input, c)).filter((w): w is Walk => !!w);
+    if (!walks.length) {
+      const usual = defaultCentre(input);
+      const w = usual ? buildWalk(input, usual) : null;
+      walks = w ? [w] : [];
+    }
+    return walks.length ? mergeWalks(walks) : null;
+  }, [input, at, anchors]);
   const res = serverMode ? remote : store;
-  const walk = serverMode ? (remote.data ?? null) : here;
+  const pic = useMemo(() => (serverMode ? (remote.data?.length ? mergeWalks(remote.data) : null) : here), [serverMode, remote.data, here]);
+  const walk = pic?.walk ?? null;
+  const multi = !!pic && pic.anchors.length > 1;
 
   // The first sentence of each note shown, asked for the notes in view; the picture never waits on it.
   const noteIds = useMemo(() => (walk && !serverMode ? walk.nodes.flatMap((n) => (n.kind === "note" ? [n.note.id] : [])).sort().join(",") : ""), [walk, serverMode]);
@@ -190,6 +214,7 @@ function WalkPanel({ anchor, multi, struck: struckTags }: { anchor: string | nul
   const height = width >= 640 ? Math.max(420, Math.min(720, Math.round(width * 0.52))) : Math.max(480, Math.min(780, Math.round(width * 1.4)));
 
   // Whether there is room for the list beside the picture, measured before the first paint.
+  const listCount = Math.max(1, pic?.walks.length ?? 1);
   const [outer, setOuter] = useState<HTMLDivElement | null>(null);
   const [room, setRoom] = useState(0);
   useLayoutEffect(() => {
@@ -200,7 +225,7 @@ function WalkPanel({ anchor, multi, struck: struckTags }: { anchor: string | nul
     ro.observe(outer);
     return () => ro.disconnect();
   }, [outer]);
-  const beside = room >= SIDE_MIN;
+  const beside = room >= SIDE_MIN + (listCount - 1) * (SIDE_W + 16);
   // Narrow: the picture and the list are two pages side by side, swiped between.
   const pager = useRef<HTMLDivElement | null>(null);
   const [page, setPage] = useState(0);
@@ -210,13 +235,10 @@ function WalkPanel({ anchor, multi, struck: struckTags }: { anchor: string | nul
     setPage(n);
   };
 
-  const layout = useMemo(() => (walk && width > 0 ? layoutWalk(walk, width, height) : null), [walk, width, height]);
+  const layout = useMemo(() => (walk && pic && width > 0 ? layoutWalk(walk, width, height, multi ? { ids: pic.anchors, reach: pic.reach } : undefined) : null), [walk, pic, multi, width, height]);
   const { scene, e } = useGlide(walk, layout);
 
   const [hover, setHover] = useState<string | null>(null);
-  const [picked, setPicked] = useState<string | null>(null);
-  // The bubble just chosen, marked at once while its walk is on the way.
-  const [chosen, setChosen] = useState<string | null>(null);
   // What the box under the picture describes: the last thing pointed at, held while the pointer travels to
   // the box, and let go (back to the centre) once the pointer has left the picture, the list and the box.
   const [kept, setKept] = useState<string | null>(null);
@@ -233,7 +255,7 @@ function WalkPanel({ anchor, multi, struck: struckTags }: { anchor: string | nul
       setHover(id);
       if (id === null) setKept(null);
       // What a click here would show is asked for now, so the click has nothing to wait on.
-      if (ahead) void preload(url(ahead), (key: string) => api<Walk>(key));
+      if (ahead) void preload(walksKey([url(ahead)]), fetchWalks);
     }, wait);
   };
   useEffect(() => cancelAim, []);
@@ -257,10 +279,9 @@ function WalkPanel({ anchor, multi, struck: struckTags }: { anchor: string | nul
   // The left tag list wears this walk's colours for the tags it shows.
   useEffect(() => {
     if (!walk) return;
-    const key = anchor ?? "";
-    showPicture(key, new Map(walk.nodes.flatMap((n) => (n.kind === "tag" ? [[n.name, n.ring] as [string, number]] : []))));
-    return () => showPicture(key, null);
-  }, [walk, anchor]);
+    showPicture("picture", new Map(walk.nodes.flatMap((n) => (n.kind === "tag" ? [[n.name, n.ring] as [string, number]] : []))));
+    return () => showPicture("picture", null);
+  }, [walk]);
 
   if (!allAnswered(res)) return null;
 
@@ -276,9 +297,11 @@ function WalkPanel({ anchor, multi, struck: struckTags }: { anchor: string | nul
   }
 
   const centre = walk.nodes.find((n) => n.id === walk.centre)!;
+  const allNodes = pic!.walks.flatMap((w) => w.nodes);
+  const heading = pic!.anchors.map((id) => nameOf(allNodes.find((n) => n.id === id)!)).join(" · ");
   const go = (node: WalkNode) => {
     if (node.id === walk.centre) return;
-    setTrail((tr) => [...tr, { at: whereOf(centre), name: nameOf(centre) }]);
+    setTrail((tr) => [...tr, { at, name: heading }]);
     setAt(whereOf(node));
     cancelAim();
     setHover(null);
@@ -312,12 +335,16 @@ function WalkPanel({ anchor, multi, struck: struckTags }: { anchor: string | nul
   const stripNode = shownOf(walk, kept);
   const ringOf = new Map(walk.nodes.map((n) => [n.id, n.ring]));
 
-  const rows = listOf(walk);
+  const lists = pic!.walks.map((w) => ({ walk: w, rows: listOf(w), name: nameOf(w.nodes.find((n) => n.id === w.centre)!) }));
+  const shares = pic!.shares;
+  const words: Record<Share, string> = { shared: t(pic!.anchors.length > 2 ? "walkInAll" : "walkInBoth"), only: t("walkOnlyHere") };
   // A row pointed at lights its bubble as a bubble does, at once; a list has no crowd to cross.
   const point = (id: string) => {
     cancelAim();
     setHover(id);
   };
+
+  const column = { multi, height, struck, lit: lit?.nodes ?? null, shares, words, onPoint: point, onLeave: () => aim(null, LET_GO_MS), t, lang };
 
   const picture = (
     <>
@@ -462,6 +489,11 @@ function WalkPanel({ anchor, multi, struck: struckTags }: { anchor: string | nul
                       fillOpacity={tag ? 0.15 : undefined}
                       strokeWidth={isCentre ? 3 : 1.6}
                     />
+                    {shares.get(d.node.id) && (
+                      <g transform={`translate(${d.r + 8} ${-(d.r + 8)})`} className="text-muted-foreground">
+                        <ShareGlyph share={shares.get(d.node.id)!} />
+                      </g>
+                    )}
                     {tag && d.node.kind === "tag" && (
                       <text textAnchor="middle" dy="0.35em" fontSize={Math.max(11, Math.min(15, d.r * 0.7))} fontWeight={600} className="fill-current" textDecoration={crossed ? "line-through" : undefined}>
                         {d.node.count}
@@ -495,7 +527,7 @@ function WalkPanel({ anchor, multi, struck: struckTags }: { anchor: string | nul
       <div style={{ height: STRIP_H }} className="mt-2" aria-live="polite" onPointerEnter={cancelAim} onPointerLeave={() => aim(null, LET_GO_MS)}>
         {stripNode && (
           <div className="overflow-y-auto rounded-2xl border border-border bg-card p-3 text-sm" style={{ maxHeight: STRIP_H }}>
-            {stripNode.kind === "note" ? <NoteCard node={stripNode} summary={summaryOf(stripNode)} lang={lang} t={t} /> : <TagCard node={stripNode} crossed={isStruck(stripNode, struck)} t={t} />}
+            {stripNode.kind === "note" ? <NoteCard node={stripNode} summary={summaryOf(stripNode)} share={shares.get(stripNode.id)} words={words} lang={lang} t={t} /> : <TagCard node={stripNode} crossed={isStruck(stripNode, struck)} t={t} />}
             <Connections node={stripNode} walk={walk} t={t} />
           </div>
         )}
@@ -515,6 +547,15 @@ function WalkPanel({ anchor, multi, struck: struckTags }: { anchor: string | nul
             {k.text}
           </span>
         ))}
+        {multi &&
+          (["shared", "only"] as Share[]).map((share) => (
+            <span key={share} className="inline-flex items-center gap-1">
+              <svg width="14" height="8" viewBox="-7 -4 14 8" aria-hidden="true" className="text-muted-foreground">
+                <ShareGlyph share={share} />
+              </svg>
+              {words[share]}
+            </span>
+          ))}
       </div>
     </>
   );
@@ -527,23 +568,27 @@ function WalkPanel({ anchor, multi, struck: struckTags }: { anchor: string | nul
             {t("walkBack", { name: trail[trail.length - 1].name })}
           </Button>
         )}
-        {multi ? <h2 className="text-2xl font-bold">{nameOf(centre)}</h2> : <h1 className="text-2xl font-bold">{nameOf(centre)}</h1>}
-        <span className="text-sm text-muted-foreground">
-          {centre.kind === "tag" ? t("webNotes", { n: centre.count }) : formatDateShort(centre.at, lang)}
-        </span>
+        <h1 className="text-2xl font-bold">{multi ? heading : nameOf(centre)}</h1>
+        {!multi && (
+          <span className="text-sm text-muted-foreground">
+            {centre.kind === "tag" ? t("webNotes", { n: centre.count }) : formatDateShort(centre.at, lang)}
+          </span>
+        )}
         {centre.kind === "note" && (
           <NoteLink note={centre.note} className="ml-auto text-sm font-medium hover:underline">
             {t("walkOpen")}
           </NoteLink>
         )}
-        {centre.kind === "tag" && centre.meaning && <p className="w-full text-sm text-muted-foreground">{centre.meaning}</p>}
+        {!multi && centre.kind === "tag" && centre.meaning && <p className="w-full text-sm text-muted-foreground">{centre.meaning}</p>}
         {centre.kind === "note" && summaryOf(centre) && <p className="w-full text-sm text-muted-foreground">{summaryOf(centre)}</p>}
       </div>
 
       {beside ? (
-        <div style={{ display: "grid", gridTemplateColumns: `minmax(0, 1fr) ${SIDE_W}px`, gap: 16, alignItems: "start" }}>
+        <div style={{ display: "grid", gridTemplateColumns: `minmax(0, 1fr) repeat(${lists.length}, ${SIDE_W}px)`, gap: 16, alignItems: "start" }}>
           <div style={{ minWidth: 0 }}>{picture}</div>
-          <WalkList rows={rows} height={height} struck={struck} lit={lit?.nodes ?? null} centre={walk.centre} onPoint={point} onLeave={() => aim(null, LET_GO_MS)} onGo={go} t={t} lang={lang} />
+          {lists.map((l) => (
+            <ListColumn key={l.walk.centre} list={l} onGo={go} {...column} />
+          ))}
         </div>
       ) : (
         <div>
@@ -551,9 +596,11 @@ function WalkPanel({ anchor, multi, struck: struckTags }: { anchor: string | nul
             <Button size="sm" variant={page === 0 ? "primary" : "secondary"} tip={t("tipWalkPicture")} aria-pressed={page === 0} onClick={() => showPage(0)}>
               {t("walkPicture")}
             </Button>
-            <Button size="sm" variant={page === 1 ? "primary" : "secondary"} tip={t("tipWalkList")} aria-pressed={page === 1} onClick={() => showPage(1)}>
-              {t("walkList")}
-            </Button>
+            {lists.map((l, i) => (
+              <Button key={l.walk.centre} size="sm" variant={page === i + 1 ? "primary" : "secondary"} tip={t("tipWalkList")} aria-pressed={page === i + 1} onClick={() => showPage(i + 1)}>
+                {multi ? l.name : t("walkList")}
+              </Button>
+            ))}
           </div>
           <div
             ref={pager}
@@ -561,9 +608,18 @@ function WalkPanel({ anchor, multi, struck: struckTags }: { anchor: string | nul
             style={{ display: "flex", overflowX: "auto", scrollSnapType: "x mandatory", scrollbarWidth: "none", overscrollBehaviorX: "contain" }}
           >
             <div style={{ flex: "0 0 100%", minWidth: 0, scrollSnapAlign: "start" }}>{picture}</div>
-            <div style={{ flex: "0 0 100%", minWidth: 0, scrollSnapAlign: "start" }}>
-              <WalkList rows={rows} height={height} struck={struck} lit={lit?.nodes ?? null} centre={walk.centre} onPoint={point} onLeave={() => aim(null, LET_GO_MS)} onGo={(n) => { showPage(0); go(n); }} t={t} lang={lang} />
-            </div>
+            {lists.map((l) => (
+              <div key={l.walk.centre} style={{ flex: "0 0 100%", minWidth: 0, scrollSnapAlign: "start" }}>
+                <ListColumn
+                  list={l}
+                  onGo={(n) => {
+                    showPage(0);
+                    go(n);
+                  }}
+                  {...column}
+                />
+              </div>
+            ))}
           </div>
         </div>
       )}
@@ -571,10 +627,29 @@ function WalkPanel({ anchor, multi, struck: struckTags }: { anchor: string | nul
   );
 }
 
-function NoteCard({ node, summary, lang, t }: { node: Extract<WalkNode, { kind: "note" }>; summary: string | null; lang: Lang; t: T }) {
+/** One anchor's list, titled with the anchor when the picture holds several. */
+function ListColumn({ list, multi, height, struck, lit, shares, words, onPoint, onLeave, onGo, t, lang }: { list: { walk: Walk; rows: Row[]; name: string }; multi: boolean; height: number; struck: ReadonlySet<string>; lit: Set<string> | null; shares: ReadonlyMap<string, Share>; words: Record<Share, string>; onPoint: (id: string) => void; onLeave: () => void; onGo: (n: WalkNode) => void; t: T; lang: Lang }) {
+  return (
+    <div style={{ minWidth: 0 }}>
+      {multi && (
+        <p className="mb-1 text-sm font-semibold" style={{ color: levelColour(1) }}>
+          {list.name}
+        </p>
+      )}
+      <WalkList rows={list.rows} height={height} struck={struck} lit={lit} centre={list.walk.centre} shares={shares} words={words} onPoint={onPoint} onLeave={onLeave} onGo={onGo} t={t} lang={lang} />
+    </div>
+  );
+}
+
+function NoteCard({ node, summary, share, words, lang, t }: { node: Extract<WalkNode, { kind: "note" }>; summary: string | null; share: Share | undefined; words: Record<Share, string>; lang: Lang; t: T }) {
   return (
     <div>
       <p className="font-medium">{node.note.title}</p>
+      {share && (
+        <p className="mb-1">
+          <ShareMark share={share} word={words[share]} />
+        </p>
+      )}
       <p className="mb-1 text-xs text-muted-foreground">
         {formatDateShort(node.at, lang)}
         {node.tags.length > 0 && ` · ${node.tags.map((tag) => `#${tag}`).join(" ")}`}

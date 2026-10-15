@@ -2,10 +2,35 @@
 import type { useLang } from "@/hooks/use-lang";
 import { formatDateShort } from "@/lib/format";
 import type { WalkNode } from "@/lib/note/walk";
+import type { Share } from "@/lib/note/walk-set";
 import { LEVEL_WIDTH, type Row, isStruck, levelColour, nameOf } from "@/lib/note/walk-levels";
 
 type T = ReturnType<typeof useLang>["t"];
 type Lang = ReturnType<typeof useLang>["lang"];
+
+/** The mark for a note held by several anchors (two rings) or by one (a dot), drawn centred on 0,0 in the picture and in every list. */
+export function ShareGlyph({ share }: { share: Share }) {
+  return share === "shared" ? (
+    <>
+      <circle cx={-2.5} cy={0} r={3.4} fill="none" stroke="currentColor" strokeWidth={1.4} />
+      <circle cx={2.5} cy={0} r={3.4} fill="none" stroke="currentColor" strokeWidth={1.4} />
+    </>
+  ) : (
+    <circle cx={0} cy={0} r={3} fill="currentColor" />
+  );
+}
+
+/** The mark with its words, for a list row and the box under the picture. */
+export function ShareMark({ share, word }: { share: Share; word: string }) {
+  return (
+    <span className="text-xs text-muted-foreground" style={{ flex: "none", display: "inline-flex", alignItems: "center", gap: 4 }}>
+      <svg width={14} height={8} viewBox="-7 -4 14 8" aria-hidden="true">
+        <ShareGlyph share={share} />
+      </svg>
+      {word}
+    </span>
+  );
+}
 
 /**
  * The walk as a list, nearest first, in the picture's colours. A row lights its
@@ -14,7 +39,7 @@ type Lang = ReturnType<typeof useLang>["lang"];
  * A row carries no tip (`tips-check.mjs`): the box under the picture already says
  * what the lit thing is and why, and a tip here covered the picture.
  */
-export function WalkList({ rows, height, lit, struck, centre, onPoint, onLeave, onGo, t, lang }: { rows: Row[]; height: number; struck: ReadonlySet<string>; lit: Set<string> | null; centre: string; onPoint: (id: string) => void; onLeave: () => void; onGo: (n: WalkNode) => void; t: T; lang: Lang }) {
+export function WalkList({ rows, height, lit, struck, centre, shares, words, onPoint, onLeave, onGo, t, lang }: { rows: Row[]; height: number; shares: ReadonlyMap<string, Share>; words: Record<Share, string>; struck: ReadonlySet<string>; lit: Set<string> | null; centre: string; onPoint: (id: string) => void; onLeave: () => void; onGo: (n: WalkNode) => void; t: T; lang: Lang }) {
   return (
     <div className="overflow-y-auto rounded-2xl border border-border bg-card" style={{ maxHeight: height }} onPointerLeave={onLeave}>
       {rows.map((r, i) => {
@@ -39,6 +64,7 @@ export function WalkList({ rows, height, lit, struck, centre, onPoint, onLeave, 
             <span className="truncate text-sm" style={{ flex: 1, minWidth: 0, fontWeight: n.id === centre || tag ? 600 : 400, textDecoration: isStruck(n, struck) ? "line-through" : undefined }}>
               {nameOf(n)}
             </span>
+            {shares.get(n.id) && <ShareMark share={shares.get(n.id)!} word={words[shares.get(n.id)!]} />}
             <span className="text-xs text-muted-foreground" style={{ flex: "none" }}>
               {tag ? t("webNotes", { n: n.count }) : formatDateShort(n.at, lang)}
             </span>
