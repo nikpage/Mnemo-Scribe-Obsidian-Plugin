@@ -368,6 +368,9 @@ export function BrainReading({
             <Plus className="h-3 w-3" aria-hidden />
             {t("brainAdd")}
           </Chip>
+          <Chip on={!!narrow.alone} aria-pressed={!!narrow.alone} tip={t("tipBrainAlone")} onClick={() => setNarrow({ ...narrow, alone: !narrow.alone })}>
+            {t("brainAlone")}
+          </Chip>
         </div>
 
         {open === "when" && (

@@ -25,7 +25,8 @@ export type Scope = (typeof SCOPES)[number];
  * Which notes a subject reading may read at all: those carrying every `only`
  * tag, none of the `not` tags, recorded from `from` to `to` (dates, inclusive).
  * `centre`, a note's id, is read first and always, whatever else narrows:
- * every other note is read for what it says about it.
+ * every other note is read for what it says about it. `alone` reads only these
+ * notes: no notes from elsewhere are added by a link, a subject or a theme.
  */
 export interface Narrow {
   only: string[];
@@ -33,6 +34,7 @@ export interface Narrow {
   from: string;
   to: string;
   centre?: string;
+  alone?: boolean;
 }
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -52,6 +54,7 @@ export function subjectTarget(kind: Kind, subject: string, narrow?: Partial<Narr
   if (narrow?.from && DATE.test(narrow.from)) p.set("from", narrow.from);
   if (narrow?.to && DATE.test(narrow.to)) p.set("to", narrow.to);
   if (narrow?.centre) p.set("centre", narrow.centre);
+  if (narrow?.alone) p.set("alone", "1");
   const tail = p.toString();
   return tail ? `${head}\n${tail}` : head;
 }
@@ -67,7 +70,8 @@ export function subjectOf(target: string): { kind: Kind; subject: string; narrow
   const list = (key: string) => normalizeTags((p.get(key) || "").split(","));
   const date = (key: string) => (DATE.test(p.get(key) || "") ? p.get(key)! : "");
   const centre = p.get("centre") || "";
-  return { kind, subject, narrow: { only: list("only"), not: list("not"), from: date("from"), to: date("to"), ...(centre ? { centre } : {}) } };
+  const alone = p.get("alone") === "1";
+  return { kind, subject, narrow: { only: list("only"), not: list("not"), from: date("from"), to: date("to"), ...(centre ? { centre } : {}), ...(alone ? { alone } : {}) } };
 }
 
 /**
