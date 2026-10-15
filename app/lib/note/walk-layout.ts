@@ -17,7 +17,9 @@ export const WIDE = 640;
 export type Placed = { id: string; x: number; y: number; r: number; /** Its name is written beside it. */ named: boolean; label: string };
 /** `at` is the place along the time axis. */
 export type Tick = { at: number; iso: string; kind: "month" | "year" };
-export type Layout = { placed: Map<string, Placed>; ticks: Tick[]; along: "x" | "y"; width: number; height: number };
+/** A long silence between two notes, drawn as a break instead of empty room. */
+export type Break = { at: number; from: string; to: string };
+export type Layout = { placed: Map<string, Placed>; ticks: Tick[]; breaks: Break[]; along: "x" | "y"; width: number; height: number };
 
 const hash = (text: string): number => {
   let h = 2166136261;
@@ -29,17 +31,45 @@ const labelOf = (n: WalkNode) => (n.kind === "tag" ? `#${n.name}` : n.note.title
 const short = (text: string, max = 22) => (text.length > max ? `${text.slice(0, max - 1)}…` : text);
 export const radius = (n: WalkNode) => (n.kind === "tag" ? Math.min(30, 11 + 4.2 * Math.sqrt(n.count)) : 7);
 
-/** Month or year starts within the span, few enough to read. */
-function ticksFor(from: number, to: number, place: (ms: number) => number): Tick[] {
-  const days = (to - from) / 86400000;
+const DAY = 86400000;
+/** A silence this long, and this many times the usual gap, is shown as a break. */
+const BREAK_MIN_DAYS = 90;
+const BREAK_TIMES = 8;
+
+/**
+ * Notes are spaced by their order, not by the days between them: most notes
+ * are recent, and on a calendar scale they pile up in the last tenth. Each
+ * distinct moment gets one slot, a long silence gets one more, and dates are
+ * marked where they fall among the slots.
+ */
+function slots(times: number[]): { at: number; slot: number }[] {
+  const distinct = [...new Set(times)].sort((a, b) => a - b);
+  const gaps = distinct.slice(1).map((t, i) => t - distinct[i]).sort((a, b) => a - b);
+  const usual = gaps.length ? gaps[Math.floor(gaps.length / 2)] : 0;
+  const long = Math.max(BREAK_MIN_DAYS * DAY, BREAK_TIMES * usual);
+  let slot = 0;
+  return distinct.map((at, i) => {
+    if (i > 0) slot += at - distinct[i - 1] > long ? 2 : 1;
+    return { at, slot };
+  });
+}
+
+/** Month or year starts, few enough to read, placed among the slots. */
+function ticksFor(from: number, to: number, place: (ms: number) => number, spare: number): Tick[] {
+  const days = (to - from) / DAY;
   const out: Tick[] = [];
   const start = new Date(from);
   const stepMonths = days <= 120 ? 1 : days <= 400 ? 3 : days <= 1100 ? 6 : 12;
   let at = Date.UTC(start.getUTCFullYear(), start.getUTCMonth() + 1, 1);
   let guard = 0;
+  let last = -Infinity;
   while (at <= to && guard++ < 400) {
     const d = new Date(at);
-    if (d.getUTCMonth() % stepMonths === 0) out.push({ at: place(at), iso: d.toISOString(), kind: d.getUTCMonth() === 0 ? "year" : "month" });
+    const x = place(at);
+    if (d.getUTCMonth() % stepMonths === 0 && Number.isFinite(x) && x - last >= spare) {
+      out.push({ at: x, iso: d.toISOString(), kind: d.getUTCMonth() === 0 ? "year" : "month" });
+      last = x;
+    }
     at = Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1);
   }
   return out;
@@ -54,7 +84,27 @@ export function layoutWalk(walk: Walk, width: number, height: number): Layout {
   const from = times.length ? Math.min(...times) : null;
   const to = times.length ? Math.max(...times) : null;
   const span = from !== null && to !== null ? to - from : 0;
-  const place = (ms: number) => (span > 0 && from !== null ? MARGIN + ((ms - from) / span) * (U - 2 * MARGIN) : U / 2);
+  const moments = slots(times);
+  const last = moments.length ? moments[moments.length - 1].slot : 0;
+  const slotAt = (slot: number) => (last > 0 ? MARGIN + (slot / last) * (U - 2 * MARGIN) : U / 2);
+  const exact = new Map(moments.map((o) => [o.at, slotAt(o.slot)]));
+  /** Where a moment falls: on its note's slot, or between the slots either side of it. */
+  const place = (ms: number): number => {
+    const hit = exact.get(ms);
+    if (hit !== undefined) return hit;
+    if (!moments.length) return U / 2;
+    if (ms <= moments[0].at) return slotAt(moments[0].slot);
+    for (let i = 1; i < moments.length; i++) {
+      if (ms <= moments[i].at) {
+        const a = moments[i - 1];
+        const b = moments[i];
+        // Inside a break there is no place for a date; the break names its two ends.
+        if (b.slot - a.slot > 1) return Number.NaN;
+        return slotAt(a.slot) + ((ms - a.at) / (b.at - a.at)) * (slotAt(b.slot) - slotAt(a.slot));
+      }
+    }
+    return slotAt(last);
+  };
   const vLow = MARGIN * 0.6;
   const vHigh = V - MARGIN * 0.6;
   const clampV = (v: number) => Math.max(vLow, Math.min(vHigh, v));
@@ -141,5 +191,10 @@ export function layoutWalk(walk: Walk, width: number, height: number): Layout {
     }
   }
 
-  return { placed, ticks: from !== null && to !== null && span > 0 ? ticksFor(from, to, place) : [], along, width, height };
+  const breaks: Break[] = [];
+  for (let i = 1; i < moments.length; i++) {
+    if (moments[i].slot - moments[i - 1].slot > 1) breaks.push({ at: (slotAt(moments[i].slot) + slotAt(moments[i - 1].slot)) / 2, from: new Date(moments[i - 1].at).toISOString(), to: new Date(moments[i].at).toISOString() });
+  }
+  const ticks = from !== null && to !== null && span > 0 ? ticksFor(from, to, place, 64) : [];
+  return { placed, ticks, breaks, along, width, height };
 }

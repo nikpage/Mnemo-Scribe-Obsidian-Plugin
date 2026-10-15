@@ -29,7 +29,10 @@ const whereOf = (n: WalkNode): Where => (n.kind === "tag" ? { tag: n.name } : { 
 const nameOf = (n: WalkNode) => (n.kind === "tag" ? `#${n.name}` : n.note.title);
 const ease = (x: number) => 1 - Math.pow(1 - x, 3);
 const GLIDE_MS = 700;
-const DIM = 0.16;
+const DIM = 0.07;
+/** How long a pointer must rest on a bubble before it lights, and how long after leaving the picture before it lets go. */
+const REST_MS = 120;
+const LET_GO_MS = 400;
 
 function wantsStill(): boolean {
   try {
@@ -139,7 +142,20 @@ export function WebView() {
 
   const [hover, setHover] = useState<string | null>(null);
   const [picked, setPicked] = useState<string | null>(null);
+  // A line of the lit bubble, pointed at to read why it is there.
+  const [line, setLine] = useState<string | null>(null);
   const touch = useRef(false);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cancelAim = () => {
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = null;
+  };
+  /** Lights `id` after the pointer has rested on it; crossing a crowd lights nothing on the way. */
+  const aim = (id: string | null, wait: number) => {
+    cancelAim();
+    timer.current = setTimeout(() => setHover(id), wait);
+  };
+  useEffect(() => cancelAim, []);
 
   // What is lit: the thing pointed at and what touches it.
   const lit = useMemo(() => {
@@ -179,16 +195,20 @@ export function WebView() {
     if (node.id === walk.centre) return;
     setTrail((tr) => [...tr, { at: whereOf(centre), name: nameOf(centre) }]);
     setAt(whereOf(node));
+    cancelAim();
     setHover(null);
     setPicked(null);
+    setLine(null);
   };
   const back = () => {
     const last = trail[trail.length - 1];
     if (!last) return;
     setTrail((tr) => tr.slice(0, -1));
     setAt(last.at);
+    cancelAim();
     setHover(null);
     setPicked(null);
+    setLine(null);
   };
 
   const pos = (d: Drawn) => {
@@ -200,8 +220,9 @@ export function WebView() {
   const dimOf = (id: string, kind: "node" | "edge") => (!lit ? 1 : (kind === "node" ? lit.nodes : lit.edges).has(id) ? 1 : DIM);
   const alone = walk.nodes.length === 1;
 
-  const cardOf = lit ? (scene.nodes.get(lit.id)?.node ?? null) : null;
-  const cardEdge = lit && !cardOf ? (walk.edges.find((x) => x.id === lit.id) ?? null) : null;
+  const pointedLine = line ? (walk.edges.find((x) => x.id === line) ?? null) : null;
+  const cardOf = lit && !pointedLine ? (scene.nodes.get(lit.id)?.node ?? null) : null;
+  const cardEdge = pointedLine ?? (lit && !cardOf ? (walk.edges.find((x) => x.id === lit.id) ?? null) : null);
 
   return (
     <div>
@@ -224,9 +245,30 @@ export function WebView() {
         {centre.kind === "note" && centre.summary && <p className="w-full text-sm text-muted-foreground">{centre.summary}</p>}
       </div>
 
-      <div ref={setStage} className="w-full overflow-hidden rounded-2xl border border-border bg-card" style={{ height, position: "relative" }}>
+      <div
+        ref={setStage}
+        className="w-full overflow-hidden rounded-2xl border border-border bg-card"
+        style={{ height, position: "relative" }}
+        onPointerEnter={cancelAim}
+        onPointerLeave={() => aim(null, LET_GO_MS)}
+      >
         {layout && (
-          <svg width={layout.width} height={layout.height} role="img" aria-label={t("webTitle")} style={{ display: "block" }}>
+          <svg
+            width={layout.width}
+            height={layout.height}
+            role="img"
+            aria-label={t("webTitle")}
+            style={{ display: "block" }}
+          >
+            <rect
+              width={layout.width}
+              height={layout.height}
+              fill="transparent"
+              onClick={() => {
+                setPicked(null);
+                setLine(null);
+              }}
+            />
             <defs>
               <filter id="walk-glow" x="-60%" y="-60%" width="220%" height="220%">
                 <feGaussianBlur stdDeviation="6" />
@@ -252,6 +294,26 @@ export function WebView() {
               </g>
             ))}
 
+            {layout.breaks.map((b) => (
+              <g key={b.from}>
+                {layout.along === "x" ? (
+                  <>
+                    <line x1={b.at} x2={b.at} y1={14} y2={layout.height - 44} className="stroke-border" strokeWidth={1} strokeDasharray="1 4" />
+                    <text x={b.at} y={layout.height - 30} textAnchor="middle" fontSize={11} className="fill-current text-muted-foreground">
+                      {`${formatFactDate(b.from.slice(0, 7), lang)} ⁄⁄ ${formatFactDate(b.to.slice(0, 7), lang)}`}
+                    </text>
+                  </>
+                ) : (
+                  <>
+                    <line x1={14} x2={layout.width - 14} y1={b.at} y2={b.at} className="stroke-border" strokeWidth={1} strokeDasharray="1 4" />
+                    <text x={16} y={b.at - 5} fontSize={11} className="fill-current text-muted-foreground">
+                      {`${formatFactDate(b.from.slice(0, 7), lang)} ⁄⁄ ${formatFactDate(b.to.slice(0, 7), lang)}`}
+                    </text>
+                  </>
+                )}
+              </g>
+            ))}
+
             {[...scene.edges.values()].map(({ edge, mode }) => {
               const a = where.get(edge.a);
               const b = where.get(edge.b);
@@ -270,15 +332,27 @@ export function WebView() {
                 <g
                   key={edge.id}
                   opacity={alpha}
-                  onPointerEnter={() => setHover(edge.id)}
-                  onPointerLeave={() => setHover((h) => (h === edge.id ? null : h))}
+                  onPointerEnter={() => {
+                    const now = hover ?? picked;
+                    const onNode = !!now && (now.startsWith("t:") || now.startsWith("n:"));
+                    // While a bubble is lit, only its own lines answer: the rest must not steal the pointer.
+                    if (!onNode) aim(edge.id, REST_MS);
+                    else if (edge.a === now || edge.b === now) setLine(edge.id);
+                  }}
+                  onPointerLeave={() => {
+                    cancelAim();
+                    setLine(null);
+                  }}
                   onPointerDown={(ev) => {
                     touch.current = ev.pointerType === "touch";
                   }}
-                  onClick={() => setPicked((p) => (p === edge.id ? null : edge.id))}
+                  onClick={(ev) => {
+                    ev.stopPropagation();
+                    setPicked((p) => (p === edge.id ? null : edge.id));
+                  }}
                 >
                   <path d={d} fill="none" stroke="transparent" strokeWidth={16} />
-                  <path d={d} fill="none" className={look.className} strokeWidth={look.width} strokeLinecap="round" strokeDasharray={look.dash} />
+                  <path d={d} fill="none" className={look.className} strokeWidth={look.width * (lit?.edges.has(edge.id) ? 1.5 : 1)} strokeLinecap="round" strokeDasharray={look.dash} />
                 </g>
               );
             })}
@@ -290,7 +364,8 @@ export function WebView() {
                 const isCentre = d.node.id === walk.centre;
                 const tag = d.node.kind === "tag";
                 const alpha = p.a * dimOf(d.node.id, "node");
-                const open = () => {
+                const open = (ev: React.MouseEvent) => {
+                  ev.stopPropagation();
                   if (touch.current && picked !== d.node.id) setPicked(d.node.id);
                   else go(d.node);
                 };
@@ -303,8 +378,10 @@ export function WebView() {
                     role="button"
                     tabIndex={0}
                     aria-label={nameOf(d.node)}
-                    onPointerEnter={(ev) => ev.pointerType !== "touch" && setHover(d.node.id)}
-                    onPointerLeave={() => setHover((h) => (h === d.node.id ? null : h))}
+                    onPointerEnter={(ev) => {
+                      if (ev.pointerType !== "touch") aim(d.node.id, REST_MS);
+                    }}
+                    onPointerLeave={cancelAim}
                     onPointerDown={(ev) => {
                       touch.current = ev.pointerType === "touch";
                     }}
