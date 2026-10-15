@@ -311,6 +311,7 @@ export function WebView() {
                     onClick={open}
                     onKeyDown={(ev) => ev.key === "Enter" && go(d.node)}
                   >
+                    <circle r={Math.max(d.r + 6, 18)} fill="transparent" />
                     <circle r={d.r + (isCentre ? 12 : 7)} className="fill-primary/30" filter="url(#walk-glow)" />
                     {isCentre && scene.moved && e < 1 && <circle r={d.r + 8 + 46 * e} fill="none" className="stroke-primary" strokeWidth={2} opacity={0.7 * (1 - e)} />}
                     <circle r={d.r} className={tag ? "fill-primary/15 stroke-primary" : "fill-primary stroke-card"} strokeWidth={isCentre ? 3 : 1.6} />
@@ -339,14 +340,13 @@ export function WebView() {
           </svg>
         )}
 
-        {layout && cardOf && lit && <Card at={where.get(lit.id)} size={layout} onEnter={() => setHover(lit.id)} onLeave={() => setHover(null)}>{cardOf.kind === "note" ? <NoteCard node={cardOf} lang={lang} t={t} /> : <TagCard node={cardOf} t={t} />}</Card>}
+        {layout && cardOf && lit && (
+          <Card at={where.get(lit.id)} r={scene.nodes.get(lit.id)?.r ?? 8} size={layout}>
+            {cardOf.kind === "note" ? <NoteCard node={cardOf} lang={lang} t={t} /> : <TagCard node={cardOf} t={t} />}
+          </Card>
+        )}
         {layout && cardEdge && lit && (
-          <Card
-            at={midpoint(where.get(cardEdge.a), where.get(cardEdge.b))}
-            size={layout}
-            onEnter={() => setHover(lit.id)}
-            onLeave={() => setHover(null)}
-          >
+          <Card at={midpoint(where.get(cardEdge.a), where.get(cardEdge.b))} r={0} size={layout}>
             <EdgeCard edge={cardEdge} walk={walk} t={t} />
           </Card>
         )}
@@ -373,18 +373,15 @@ export function WebView() {
 
 const midpoint = (a?: { x: number; y: number }, b?: { x: number; y: number }) => (a && b ? { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 } : undefined);
 
-/** A card beside the thing it describes, kept inside the picture; the pointer can move onto it. */
-function Card({ at, size, onEnter, onLeave, children }: { at?: { x: number; y: number }; size: Layout; onEnter: () => void; onLeave: () => void; children: React.ReactNode }) {
+/** A card below the thing it describes (above, low in the picture). It never takes the pointer, so a click always reaches the bubble. */
+function Card({ at, r, size, children }: { at?: { x: number; y: number }; r: number; size: Layout; children: React.ReactNode }) {
   if (!at) return null;
   const W = Math.min(300, size.width - 16);
   const left = Math.max(8, Math.min(size.width - W - 8, at.x - W / 2));
   const above = at.y > size.height * 0.55;
+  const gap = r + 24;
   return (
-    <div
-      onPointerEnter={onEnter}
-      onPointerLeave={onLeave}
-      style={{ position: "absolute", left, width: W, ...(above ? { bottom: size.height - at.y + 6 } : { top: at.y + 6 }), paddingTop: above ? 0 : 16, paddingBottom: above ? 16 : 0, zIndex: 5 }}
-    >
+    <div style={{ position: "absolute", left, width: W, ...(above ? { bottom: size.height - at.y + r + 8 } : { top: at.y + gap }), zIndex: 5, pointerEvents: "none" }}>
       <div className="rounded-2xl border border-border bg-card p-3 text-sm">{children}</div>
     </div>
   );
@@ -399,7 +396,7 @@ function NoteCard({ node, lang, t }: { node: Extract<WalkNode, { kind: "note" }>
         {node.tags.length > 0 && ` · ${node.tags.map((tag) => `#${tag}`).join(" ")}`}
       </p>
       {node.summary && <p className="mb-2 text-muted-foreground">{node.summary}</p>}
-      <NoteLink note={node.note} className="font-medium hover:underline">
+      <NoteLink note={node.note} className="font-medium hover:underline" style={{ pointerEvents: "auto" }}>
         {t("walkOpen")}
       </NoteLink>
     </div>
