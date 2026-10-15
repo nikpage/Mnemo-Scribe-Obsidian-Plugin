@@ -170,11 +170,20 @@ function WalkPanel({ anchorKey, struck: struckTags }: { anchorKey: string; struc
   }
   // The walk is worked out here from a slim copy of the store (names, dates, tags, links; no text), so a
   // click needs no server. A store too large to send is walked by the server, one click at a time.
-  const store = useApi<WalkStore>(WALK_STORE_URL, { revalidateOnFocus: false, keepPreviousData: true });
+  // The picture holds the copy it first settled on: a write from another window or device (typing, a click
+  // there) refreshes the store underneath, and must not redraw a picture the person is looking at.
+  const live = useApi<WalkStore>(WALK_STORE_URL, { revalidateOnFocus: false, revalidateOnReconnect: false, keepPreviousData: true });
+  const [held, setHeld] = useState<WalkStore | undefined>(undefined);
+  const [settled, setSettled] = useState(false);
+  if (!settled && live.data) {
+    if (live.data !== held) setHeld(live.data);
+    if (!live.isValidating) setSettled(true);
+  }
+  const store = { data: held, error: live.error };
   const serverMode = store.data?.more === true;
   const starts: Where[] = at ? [at] : anchors.map((tag) => ({ tag }));
   const asked = starts.length ? starts.map(url) : [url(null)];
-  const remote = useSWR<Walk[]>(serverMode ? walksKey(asked) : null, fetchWalks, { keepPreviousData: true });
+  const remote = useSWR<Walk[]>(serverMode ? walksKey(asked) : null, fetchWalks, { keepPreviousData: true, revalidateOnFocus: false, revalidateOnReconnect: false });
   const input = useMemo(() => (store.data && !store.data.more ? inputOf(store.data) : null), [store.data]);
   const here = useMemo(() => {
     if (!input) return null;
