@@ -4,16 +4,27 @@ import type { Walk, WalkEdge } from "@/lib/note/walk";
 
 /**
  * The groups inside one walk: notes and tags tied together more closely than
- * to the rest (Louvain's local moving, on the walk's own lines). The walk's
+ * to the rest (Louvain's local moving, on the walk's own lines and on which
+ * notes read alike). The walk's
  * centre is left out, since it touches nearly everything and would pull the
  * picture into one lump. Worked out the same way every time (nodes taken in id
  * order, ties to the lowest group), free of Next and server code.
  */
 
+/** Two notes by id and how alike they read, 0 to 1 (`walk-meaning.ts`). */
+export type Tie = [string, string, number];
+export type Meaning = {
+  /** The ids asked for, as asked, so a reply is only ever used for its own picture. */
+  ids: string;
+  ties: Tie[];
+};
+
 /** How firmly a line ties its two ends. */
 const WEIGHT: Record<WalkEdge["kind"], number> = { link: 3, subject: 2, theme: 1.5, under: 2, carries: 1 };
 /** Fewer nodes than this are not worth grouping. */
-const CLUSTER_MIN_NODES = 6;
+export const CLUSTER_MIN_NODES = 6;
+/** A likeness of 0.5 ties nothing; each tenth above it adds 0.8 up to 4, so close in meaning outweighs a link. */
+export const meaningWeight = (score: number) => Math.max(0, Math.min(4, 8 * (score - 0.5)));
 const PASSES = 20;
 
 /** Group number per node id; nodes with no line to another get group -1 (they are gathered into one band by the caller). */
@@ -69,13 +80,15 @@ export type Band = { lo: number; hi: number; ids: string[] };
  * Splits the room from `lo` to `hi` across the time axis into one band per
  * group, each as tall as its members need, the biggest in the middle (the
  * centre stands there) and the rest alternating outward by size. Nodes that
- * touch nothing but the centre share one last band. Null when the walk is too
+ * touch nothing but the centre share one last band. `ties` adds notes close in meaning. Null when the walk is too
  * small or holds only one group.
  */
-export function bandsOf(walk: Walk, lo: number, hi: number): Band[] | null {
+export function bandsOf(walk: Walk, lo: number, hi: number, ties: Tie[] = []): Band[] | null {
   if (walk.nodes.length < CLUSTER_MIN_NODES) return null;
   const ids = walk.nodes.filter((n) => n.id !== walk.centre).map((n) => n.id);
   const lines: [string, string, number][] = walk.edges.filter((e) => e.a !== walk.centre && e.b !== walk.centre).map((e) => [e.a, e.b, WEIGHT[e.kind]]);
+  // Notes close in meaning are tied too, whether or not any tag or link says so.
+  for (const [a, b, score] of ties) lines.push([`n:${a}`, `n:${b}`, meaningWeight(score)]);
   const found = communities(ids, lines);
   const members = new Map<number, string[]>();
   for (const [id, g] of found) members.set(g, [...(members.get(g) ?? []), id]);

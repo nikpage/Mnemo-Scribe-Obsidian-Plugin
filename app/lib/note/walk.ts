@@ -277,5 +277,5 @@ export function storeOf(input: WebInput): WalkStore {
 
 /** The walk's inputs, back from what the browser holds. */
 export function inputOf(store: WalkStore): WebInput {
-  return { rows: store.rows, kept: [], asked: [], notes: store.notes, links: store.links, facts: store.facts, themes: store.themes };
+  return { rows: store.rows, notes: store.notes, links: store.links, facts: store.facts, themes: store.themes };
 }

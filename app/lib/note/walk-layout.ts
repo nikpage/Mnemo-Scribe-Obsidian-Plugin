@@ -1,7 +1,7 @@
 // [Librarian]
 
 import type { Walk, WalkNode } from "@/lib/note/walk";
-import { bandsOf } from "@/lib/note/walk-clusters";
+import { type Tie, bandsOf } from "@/lib/note/walk-clusters";
 
 /**
  * Where each thing of a walk sits. Time runs left to right, so a note's place
@@ -89,7 +89,7 @@ function ticksFor(from: number, to: number, place: (ms: number) => number, spare
 /** Several anchors in one picture: their node ids and, for each node, the anchors whose walk holds it. */
 export type Anchoring = { ids: string[]; reach: Map<string, string[]> };
 
-export function layoutWalk(walk: Walk, width: number, height: number, anchoring?: Anchoring): Layout {
+export function layoutWalk(walk: Walk, width: number, height: number, anchoring?: Anchoring, ties?: Tie[]): Layout {
   const multi = !!anchoring && anchoring.ids.length > 1;
   // Several anchors are always bands one above the other (the first anchor on top), so time runs across at any width.
   const along: "x" | "y" = width >= WIDE || multi ? "x" : "y";
@@ -153,7 +153,7 @@ export function layoutWalk(walk: Walk, width: number, height: number, anchoring?
   }
 
   // One anchor: the walk's groups (`walk-clusters.ts`) each take a band across the time axis, so up and down says which group.
-  const grouped = multi ? null : bandsOf(walk, vLow, vHigh);
+  const grouped = multi ? null : bandsOf(walk, vLow, vHigh, ties);
   const bandOf = new Map<string, { lo: number; hi: number }>();
   for (const b of grouped ?? []) for (const id of b.ids) bandOf.set(id, b);
 

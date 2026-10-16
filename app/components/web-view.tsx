@@ -3,12 +3,13 @@
 // [Librarian, Guru]
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import useSWR, { preload } from "swr";
-import { allAnswered, api, useApi } from "@/lib/api";
+import { allAnswered, answered, api, useApi } from "@/lib/api";
 import { useLang } from "@/hooks/use-lang";
 import { formatDateShort, formatFactDate } from "@/lib/format";
 import { type Walk, type WalkEdge, type WalkNode, type WalkStore, WALK_STORE_URL, buildWalk, defaultCentre, inputOf } from "@/lib/note/walk";
 import { type Layout, type Side, layoutWalk, markAt } from "@/lib/note/walk-layout";
-import { type Share, mergeWalks } from "@/lib/note/walk-set";
+import { type Share, type Picture, mergeWalks } from "@/lib/note/walk-set";
+import { CLUSTER_MIN_NODES, type Meaning, type Tie } from "@/lib/note/walk-clusters";
 import { LEVEL_WIDTH, type Row, connectionsOf, drawOrder, isStruck, levelColour, levelOfRing, listOf, nameOf, shownOf } from "@/lib/note/walk-levels";
 import { ShareGlyph, ShareMark, WalkList } from "@/components/walk-list";
 import { NoteLink } from "@/components/note-link";
@@ -45,6 +46,13 @@ async function fetchWalks(key: string): Promise<Walk[]> {
   const walks = got.filter((w): w is Walk => !!w);
   if (!walks.length) throw failed;
   return walks;
+}
+/** Which of a picture's notes read alike, asked for once the picture's notes are known; none for several anchors (they are the bands) or a walk too small to group. */
+const fetchMeaning = (key: string) => api<Meaning>(key);
+function meaningUrlOf(w: Walk | null, multi: boolean): string | null {
+  if (!w || multi || w.nodes.length < CLUSTER_MIN_NODES) return null;
+  const ids = w.nodes.flatMap((n) => (n.kind === "note" ? [n.note.id] : [])).sort();
+  return ids.length > 1 ? `/api/notes/walk-meaning?ids=${encodeURIComponent(ids.join(","))}` : null;
 }
 const url = (at: Where | null) => (!at ? "/api/notes/walk" : "tag" in at ? `/api/notes/walk?tag=${encodeURIComponent(at.tag)}` : `/api/notes/walk?note=${encodeURIComponent(at.note)}`);
 const whereOf = (n: WalkNode): Where => (n.kind === "tag" ? { tag: n.name } : { note: n.note.id });
@@ -198,7 +206,14 @@ function WalkPanel({ anchorKey, struck: struckTags }: { anchorKey: string; struc
     return walks.length ? mergeWalks(walks) : null;
   }, [input, at, anchors]);
   const res = serverMode ? remote : store;
-  const pic = useMemo(() => (serverMode ? (remote.data?.length ? mergeWalks(remote.data) : null) : here), [serverMode, remote.data, here]);
+  const wanted = useMemo(() => (serverMode ? (remote.data?.length ? mergeWalks(remote.data) : null) : here), [serverMode, remote.data, here]);
+  // Which notes read alike is part of how the picture is laid out, so a picture is drawn only once that has
+  // answered (or failed, when it is drawn without), and the one before stays until then: nothing lands late and moves it.
+  const meaning = useApi<Meaning>(meaningUrlOf(wanted?.walk ?? null, !!wanted && wanted.anchors.length > 1), { revalidateOnFocus: false, revalidateOnReconnect: false });
+  const [shown, setShown] = useState<{ pic: Picture; ties: Tie[] } | null>(null);
+  if (wanted && (!meaningUrlOf(wanted.walk, wanted.anchors.length > 1) || answered(meaning)) && shown?.pic !== wanted) setShown({ pic: wanted, ties: meaning.data?.ties ?? [] });
+  const pic = wanted ? (shown?.pic ?? null) : null;
+  const ties = shown?.ties;
   const walk = pic?.walk ?? null;
   const multi = !!pic && pic.anchors.length > 1;
 
@@ -243,7 +258,7 @@ function WalkPanel({ anchorKey, struck: struckTags }: { anchorKey: string; struc
     setPage(n);
   };
 
-  const layout = useMemo(() => (walk && pic && width > 0 ? layoutWalk(walk, width, height, multi ? { ids: pic.anchors, reach: pic.reach } : undefined) : null), [walk, pic, multi, width, height]);
+  const layout = useMemo(() => (walk && pic && width > 0 ? layoutWalk(walk, width, height, multi ? { ids: pic.anchors, reach: pic.reach } : undefined, ties) : null), [walk, pic, multi, width, height, ties]);
   const { scene, e } = useGlide(walk, layout);
 
   const [hover, setHover] = useState<string | null>(null);
@@ -257,13 +272,18 @@ function WalkPanel({ anchorKey, struck: struckTags }: { anchorKey: string; struc
     timer.current = null;
   };
   /** Lights `id` after the pointer has rested on it; crossing a crowd lights nothing on the way. */
-  const aim = (id: string | null, wait: number, ahead?: Where) => {
+  const aim = (id: string | null, wait: number, ahead?: Where, local?: Where) => {
     cancelAim();
     timer.current = setTimeout(() => {
       setHover(id);
       if (id === null) setKept(null);
       // What a click here would show is asked for now, so the click has nothing to wait on.
       if (ahead) void preload(walksKey([url(ahead)]), fetchWalks);
+      // ...and, from this device's copy, which of the notes it would show read alike.
+      if (local && input) {
+        const next = meaningUrlOf(buildWalk(input, local), false);
+        if (next) void preload(next, fetchMeaning);
+      }
     }, wait);
   };
   useEffect(() => cancelAim, []);
@@ -295,7 +315,7 @@ function WalkPanel({ anchorKey, struck: struckTags }: { anchorKey: string; struc
 
   if (!walk || !scene) {
     const gone = res.error && typeof res.error === "object" && "status" in res.error && (res.error as { status: number }).status === 404;
-    const empty = !res.error && !walk;
+    const empty = !res.error && !wanted;
     return (
       <div ref={setOuter}>
         <h1 className="mb-2 text-2xl font-bold">{t("webTitle")}</h1>
@@ -479,7 +499,7 @@ function WalkPanel({ anchorKey, struck: struckTags }: { anchorKey: string; struc
                     tabIndex={0}
                     aria-label={nameOf(d.node)}
                     onPointerEnter={(ev) => {
-                      if (ev.pointerType !== "touch") aim(d.node.id, REST_MS, serverMode ? whereOf(d.node) : undefined);
+                      if (ev.pointerType !== "touch") aim(d.node.id, REST_MS, serverMode ? whereOf(d.node) : undefined, serverMode ? undefined : whereOf(d.node));
                     }}
                     onPointerLeave={cancelAim}
                     onPointerDown={(ev) => {
