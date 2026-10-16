@@ -1,6 +1,7 @@
 // [Librarian]
 
 import type { Walk, WalkNode } from "@/lib/note/walk";
+import { bandsOf } from "@/lib/note/walk-clusters";
 
 /**
  * Where each thing of a walk sits. Time runs left to right, so a note's place
@@ -27,7 +28,9 @@ export type Placed = { id: string; x: number; y: number; r: number; /** Its name
 export type Tick = { at: number; iso: string; kind: "month" | "year" };
 /** A long silence between two notes, drawn as a break instead of empty room. */
 export type Break = { at: number; from: string; to: string };
-export type Layout = { placed: Map<string, Placed>; ticks: Tick[]; breaks: Break[]; along: "x" | "y"; width: number; height: number };
+/** One group of the walk's notes and tags, its room across the time axis. */
+export type Cluster = { lo: number; hi: number };
+export type Layout = { placed: Map<string, Placed>; ticks: Tick[]; breaks: Break[]; clusters: Cluster[]; along: "x" | "y"; width: number; height: number };
 
 const hash = (text: string): number => {
   let h = 2166136261;
@@ -149,6 +152,11 @@ export function layoutWalk(walk: Walk, width: number, height: number, anchoring?
     });
   }
 
+  // One anchor: the walk's groups (`walk-clusters.ts`) each take a band across the time axis, so up and down says which group.
+  const grouped = multi ? null : bandsOf(walk, vLow, vHigh);
+  const bandOf = new Map<string, { lo: number; hi: number }>();
+  for (const b of grouped ?? []) for (const id of b.ids) bandOf.set(id, b);
+
   // A tag stands where the notes it holds stand (else where its neighbouring tags do, else in the middle).
   const uOf = new Map<string, number>();
   for (const n of walk.nodes) {
@@ -195,6 +203,10 @@ export function layoutWalk(walk: Walk, width: number, height: number, anchoring?
         bounds.set(n.id, idx === 0 || idx === ids.length - 1 ? [lo, hi] : [z.lo + 3, z.hi - 3]);
         if (idx !== 0 && idx !== ids.length - 1) v = z.row + (k % 2 === 0 ? 1 : -1) * Math.min((z.hi - z.lo) / 2 - 6, STEP * (0.35 + 0.25 * n.ring));
       }
+    } else if (bandOf.has(n.id)) {
+      const b = bandOf.get(n.id)!;
+      v = (b.lo + b.hi) / 2 + (hash(n.id) - 0.5) * (b.hi - b.lo) * 0.7;
+      bounds.set(n.id, [b.lo + 6, b.hi - 6]);
     } else if (n.from) {
       const parent = at.get(n.from)!;
       const k = kids.get(n.from) ?? 0;
@@ -282,5 +294,5 @@ export function layoutWalk(walk: Walk, width: number, height: number, anchoring?
     if (moments[i].slot - moments[i - 1].slot > 1) breaks.push({ at: (slotAt(moments[i].slot) + slotAt(moments[i - 1].slot)) / 2, from: new Date(moments[i - 1].at).toISOString(), to: new Date(moments[i].at).toISOString() });
   }
   const ticks = from !== null && to !== null && span > 0 ? ticksFor(from, to, place, 64) : [];
-  return { placed, ticks, breaks, along, width, height };
+  return { placed, ticks, breaks, clusters: (grouped ?? []).map(({ lo, hi }) => ({ lo, hi })), along, width, height };
 }

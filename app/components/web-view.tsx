@@ -386,6 +386,12 @@ function WalkPanel({ anchorKey, struck: struckTags }: { anchorKey: string; struc
               </filter>
             </defs>
 
+            {layout.clusters.map((c, i) =>
+              i % 2 === 0 ? (
+                <rect key={c.lo} x={layout.along === "x" ? 0 : c.lo} y={layout.along === "x" ? c.lo : 0} width={layout.along === "x" ? layout.width : c.hi - c.lo} height={layout.along === "x" ? c.hi - c.lo : layout.height} className="fill-muted" fillOpacity={0.45} pointerEvents="none" />
+              ) : null,
+            )}
+
             {layout.ticks.map((tick) => (
               <g key={tick.iso}>
                 {layout.along === "x" ? (
