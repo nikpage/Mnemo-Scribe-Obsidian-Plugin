@@ -10,6 +10,7 @@ import { useLang } from "@/hooks/use-lang";
 import { formatDate, formatFactDate, formatUsd } from "@/lib/format";
 import { inlineMarks, readingSections } from "@/lib/note/reading-sections";
 import { EVERYTHING, type Kind, type Narrow, type Scope, dropTag, flipTag, liveNarrow, monthsBefore, readingOf, startOf, subjectOf } from "@/lib/note/what-next-target";
+import { type LibraryRow, kindOf } from "@/lib/note/brain-library";
 import { Plus } from "lucide-react";
 import { tipOf } from "@/lib/tooltip";
 import { Button, Chip, Cost, Input, Options, Pill } from "@/components/ui";
@@ -35,6 +36,9 @@ type When = (typeof WHENS)[number];
 const WHEN_LABEL = { any: "brainAnyTime", month: "brainLastMonth", "3m": "brainLast3", year: "brainLastYear", pick: "brainPickDates" } as const;
 const WHEN_TIP = { any: "tipWhenAny", month: "tipWhenMonth", "3m": "tipWhen3m", year: "tipWhenYear", pick: "tipWhenPick" } as const;
 const WHEN_MONTHS = { any: 0, month: 1, "3m": 3, year: 12, pick: 0 } as const;
+
+/** The newest readings the Brain panel names; the rest are in the Brain library. */
+const LATEST = 10;
 
 const quoteUrl = (scope: Scope, target: string, parentId?: string) =>
   `/api/notes/what-next/quote?scope=${scope}&target=${encodeURIComponent(target)}${parentId ? `&parentId=${parentId}` : ""}`;
@@ -188,6 +192,28 @@ export function ReadingText({ scope, target }: { scope: Scope; target: string })
   );
 }
 
+/** A reading's text by its headings, each Elaborate written under the heading it writes out. */
+export function ReadingProse({ text, more = [] }: { text: string; more?: { part: string | null; reading: string | null }[] }) {
+  return (
+    <div className="space-y-4">
+      {readingSections(text).map((section, i) => {
+        const out = section.heading ? more.find((m) => m.part === section.heading && m.reading) : undefined;
+        return (
+          <section key={i}>
+            {section.heading && <h3 className="mb-1 text-sm font-semibold">{section.heading}</h3>}
+            {section.body && <Prose text={section.body} />}
+            {out && (
+              <div className="mt-2 border-l-2 border-border pl-3">
+                <Prose text={readingSections(out.reading!).map((s) => [s.heading, s.body].filter(Boolean).join("\n\n")).join("\n\n")} />
+              </div>
+            )}
+          </section>
+        );
+      })}
+    </div>
+  );
+}
+
 /** The press, its price inside it, and in words under it so a phone sees why. */
 function PressButton({ label, tip, primary, disabled, onPress, quote, why }: { label: string; tip: string; primary: boolean; disabled: boolean; onPress: () => void; quote?: Quote; why?: string }) {
   return (
@@ -284,8 +310,8 @@ export function BrainReading({
 
   const reading = useReading(asked?.scope ?? "overview", asked?.target ?? "", asked !== null);
   const { data: suggested } = useApi<{ suggestions: Suggestion[] }>("/api/notes/what-next/suggest");
-  // A reading of one note comes with that note's title.
-  const { data: earlier } = useApi<{ readings: { id: string; scope: Scope; target: string; created_at: string; title?: string }[] }>("/api/notes/what-next?history=1");
+  const { data: library } = useApi<{ readings: LibraryRow[] }>("/api/notes/what-next?library=1");
+  const latest = (library?.readings ?? []).slice(0, LATEST);
   const live = liveNarrow(narrow, struck);
   const choice = { kind: job, topics, narrow: live };
   const wanted = readingOf(choice, centre?.title);
@@ -466,13 +492,13 @@ export function BrainReading({
 
       {asked && <ReadingBody reading={reading} label={labelOf(asked.scope, asked.target)} />}
 
-      {(earlier?.readings.length ?? 0) > 0 && (
-        <NoteSection id="brain-earlier" title={t("brainEarlier")}>
+      {latest.length > 0 && (
+        <NoteSection id="brain-earlier" title={t("brainLibrary")}>
           <ul className="space-y-1">
-            {earlier!.readings.map((r) => (
+            {latest.map((r) => (
               <li key={r.id}>
                 <Button variant="link" size="sm" className="text-left" tip={t("tipBrainEarlier")} onClick={() => setAsked({ scope: r.scope, target: r.target })}>
-                  {labelOf(r.scope, r.target, r.title)} · {formatDate(r.created_at, lang)}
+                  {r.title || labelOf(r.scope, r.target)} · {t(JOB_LABEL[kindOf(r.scope, r.target)])} · {formatDate(r.created_at, lang)}
                 </Button>
               </li>
             ))}
