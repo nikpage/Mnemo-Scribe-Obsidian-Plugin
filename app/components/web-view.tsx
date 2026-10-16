@@ -18,6 +18,9 @@ import { PHRASE } from "@/components/note-links";
 import { Button, Notice } from "@/components/ui";
 import { showPicture } from "@/lib/note/web-picture";
 import type { WebSet } from "@/lib/note/web-set";
+import { BRAIN_VIEWS, type BrainView, withBrain } from "@/lib/note/walk-brain";
+import type { Kind } from "@/lib/note/what-next-target";
+import { JOB_LABEL, ReadingById } from "@/components/what-next";
 
 /**
  * The walk (`lib/note/walk.ts`): the notes a few steps out from one tag or
@@ -27,6 +30,8 @@ import type { WebSet } from "@/lib/note/web-set";
  * as SVG so that the app and both plugins' panels draw the same picture. Beside
  * it (under it on a phone, one swipe away) a list of the same walk, whose rows
  * light and walk the picture. Three levels, three colours (`walk-levels.ts`).
+ * Brain outputs can be drawn too, beside the notes they read or in their place
+ * (`walk-brain.ts`), each a diamond that opens the output under the picture.
  * Free of Next and server code.
  */
 
@@ -60,7 +65,17 @@ const meaningUrlOf = (w: Walk | null, multi: boolean): string | null => {
   return ids.length ? `/api/notes/walk-meaning?ids=${encodeURIComponent(ids.join(","))}` : null;
 };
 const url = (at: Where | null) => (!at ? "/api/notes/walk" : "tag" in at ? `/api/notes/walk?tag=${encodeURIComponent(at.tag)}` : `/api/notes/walk?note=${encodeURIComponent(at.note)}`);
-const whereOf = (n: WalkNode): Where => (n.kind === "tag" ? { tag: n.name } : { note: n.note.id });
+type Walkable = Exclude<WalkNode, { kind: "brain" }>;
+const whereOf = (n: Walkable): Where => (n.kind === "tag" ? { tag: n.name } : { note: n.note.id });
+/** The functions a Brain output can be, in the Brain panel's order. */
+const JOBS_SHOWN: Kind[] = ["picture", "log", "inspiration", "next-best", "study"];
+const VIEW_LABEL = {
+  off: { label: "walkBrainOff", tip: "tipWalkBrainOff" },
+  with: { label: "walkBrainWith", tip: "tipWalkBrainWith" },
+  only: { label: "walkBrainOnly", tip: "tipWalkBrainOnly" },
+} as const;
+/** A Brain output's mark: a diamond, so it is never taken for a note or a tag. */
+const diamond = (r: number) => `M0 ${-r} L${r} 0 L0 ${r} L${-r} 0 Z`;
 /** Slow in, quick through the middle, slow out: no jolt at the start, no long tail at the end. */
 const ease = (x: number) => (x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2);
 const GLIDE_MS = 520;
@@ -171,6 +186,10 @@ function WalkPanel({ anchorKey, struck: struckTags }: { anchorKey: string; struc
   const [chosen, setChosen] = useState<string | null>(null);
   const [trail, setTrail] = useState<{ at: Where | null; name: string }[]>([]);
   const [seen, setSeen] = useState(anchorKey);
+  // Brain outputs: none, with the notes, or in their place; one function or any; the one opened under the picture.
+  const [view, setView] = useState<BrainView>("off");
+  const [job, setJob] = useState<Kind | null>(null);
+  const [opened, setOpened] = useState<string | null>(null);
   // A new set starts from itself: a walk taken from the old one is let go.
   if (seen !== anchorKey) {
     setSeen(anchorKey);
@@ -178,6 +197,7 @@ function WalkPanel({ anchorKey, struck: struckTags }: { anchorKey: string; struc
     setTrail([]);
     setChosen(null);
     setPicked(null);
+    setOpened(null);
   }
   // The walk is worked out here from a slim copy of the store (names, dates, tags, links; no text), so a
   // click needs no server. A store too large to send is walked by the server, one click at a time.
@@ -196,6 +216,7 @@ function WalkPanel({ anchorKey, struck: struckTags }: { anchorKey: string; struc
   const asked = starts.length ? starts.map(url) : [url(null)];
   const remote = useSWR<Walk[]>(serverMode ? walksKey(asked) : null, fetchWalks, { keepPreviousData: true, revalidateOnFocus: false, revalidateOnReconnect: false });
   const input = useMemo(() => (store.data && !store.data.more ? inputOf(store.data) : null), [store.data]);
+  const brain = useMemo(() => store.data?.brain ?? [], [store.data]);
   const here = useMemo(() => {
     if (!input) return null;
     const from: Where[] = at ? [at] : anchors.map((tag) => ({ tag }));
@@ -205,10 +226,10 @@ function WalkPanel({ anchorKey, struck: struckTags }: { anchorKey: string; struc
       const w = buildWalk(input, { tag: ALL_TAG });
       walks = w ? [w] : [];
     }
-    return walks.length ? mergeWalks(walks) : null;
-  }, [input, at, anchors]);
+    return walks.length ? mergeWalks(walks.map((w) => withBrain(w, brain, view, job))) : null;
+  }, [input, at, anchors, brain, view, job]);
   const res = serverMode ? remote : store;
-  const wanted = useMemo(() => (serverMode ? (remote.data?.length ? mergeWalks(remote.data) : null) : here), [serverMode, remote.data, here]);
+  const wanted = useMemo(() => (serverMode ? (remote.data?.length ? mergeWalks(remote.data.map((w) => withBrain(w, brain, view, job))) : null) : here), [serverMode, remote.data, here, brain, view, job]);
   // Which notes read alike is part of how the picture is laid out, so a picture is drawn only once that has
   // answered (or failed, when it is drawn without), and the one before stays until then: nothing lands late and moves it.
   const asking = serverMode && wanted ? meaningUrlOf(wanted.walk, wanted.anchors.length > 1) : null;
@@ -329,6 +350,12 @@ function WalkPanel({ anchorKey, struck: struckTags }: { anchorKey: string; struc
   const allNodes = pic!.walks.flatMap((w) => w.nodes);
   const heading = pic!.anchors.map((id) => nameOf(allNodes.find((n) => n.id === id)!)).join(" · ");
   const go = (node: WalkNode) => {
+    // A Brain output is not walked to: it opens under the picture and stays lit.
+    if (node.kind === "brain") {
+      setOpened(node.brain.id);
+      setPicked(node.id);
+      return;
+    }
     if (node.id === walk.centre) return;
     setTrail((tr) => [...tr, { at, name: heading }]);
     setAt(whereOf(node));
@@ -468,6 +495,7 @@ function WalkPanel({ anchorKey, struck: struckTags }: { anchorKey: string; struc
                 const alpha = (mode === "leave" ? 1 - e : mode === "enter" ? e : 1) * dimOf(edge.id, "edge");
                 const d = curve(a.x, a.y, b.x, b.y, edge.kind === "under" ? 0.08 : 0.14);
                 const dotted = edge.kind === "subject" || edge.kind === "theme";
+                const dashed = edge.kind === "read";
                 const heavy = lit?.edges.has(edge.id) ? 1.4 : 1;
                 return (
                   <path
@@ -479,7 +507,7 @@ function WalkPanel({ anchorKey, struck: struckTags }: { anchorKey: string; struc
                     style={{ stroke: levelColour(level), transition: e >= 1 ? "opacity 260ms ease" : "none" }}
                     strokeWidth={LEVEL_WIDTH[level] * heavy}
                     strokeLinecap="round"
-                    strokeDasharray={dotted ? "1 7" : undefined}
+                    strokeDasharray={dotted ? "1 7" : dashed ? "6 5" : undefined}
                   />
                 );
               })}
@@ -508,7 +536,7 @@ function WalkPanel({ anchorKey, struck: struckTags }: { anchorKey: string; struc
                     tabIndex={0}
                     aria-label={nameOf(d.node)}
                     onPointerEnter={(ev) => {
-                      if (ev.pointerType !== "touch") aim(d.node.id, REST_MS, serverMode ? whereOf(d.node) : undefined);
+                      if (ev.pointerType !== "touch") aim(d.node.id, REST_MS, serverMode && d.node.kind !== "brain" ? whereOf(d.node) : undefined);
                     }}
                     onPointerLeave={cancelAim}
                     onPointerDown={(ev) => {
@@ -525,13 +553,17 @@ function WalkPanel({ anchorKey, struck: struckTags }: { anchorKey: string; struc
                       </circle>
                     )}
                     {isCentre && scene.moved && e < 1 && <circle r={d.r + 8 + 46 * e} fill="none" style={{ stroke: colour }} strokeWidth={2} opacity={0.7 * (1 - e)} />}
-                    <circle
-                      r={d.r}
-                      className={tag ? undefined : "stroke-card"}
-                      style={tag ? { fill: colour, stroke: colour } : { fill: colour }}
-                      fillOpacity={tag ? 0.15 : undefined}
-                      strokeWidth={isCentre ? 3 : 1.6}
-                    />
+                    {d.node.kind === "brain" ? (
+                      <path d={diamond(d.r + 2)} className="stroke-card" style={{ fill: colour }} strokeWidth={1.6} strokeLinejoin="round" />
+                    ) : (
+                      <circle
+                        r={d.r}
+                        className={tag ? undefined : "stroke-card"}
+                        style={tag ? { fill: colour, stroke: colour } : { fill: colour }}
+                        fillOpacity={tag ? 0.15 : undefined}
+                        strokeWidth={isCentre ? 3 : 1.6}
+                      />
+                    )}
                     {shares.get(d.node.id) && (
                       <g transform={`translate(${markAt(d.r, d.named).dx} ${markAt(d.r, d.named).dy})`} className="text-muted-foreground">
                         <ShareGlyph share={shares.get(d.node.id)!} />
@@ -570,7 +602,13 @@ function WalkPanel({ anchorKey, struck: struckTags }: { anchorKey: string; struc
       <div style={{ height: STRIP_H }} className="mt-2" aria-live="polite" onPointerEnter={cancelAim} onPointerLeave={() => aim(null, LET_GO_MS)}>
         {stripNode && (
           <div className="overflow-y-auto rounded-2xl border border-border bg-card p-3 text-sm" style={{ maxHeight: STRIP_H }}>
-            {stripNode.kind === "note" ? <NoteCard node={stripNode} summary={summaryOf(stripNode)} share={shares.get(stripNode.id)} words={words} lang={lang} t={t} /> : <TagCard node={stripNode} crossed={isStruck(stripNode, struck)} t={t} />}
+            {stripNode.kind === "note" ? (
+              <NoteCard node={stripNode} summary={summaryOf(stripNode)} share={shares.get(stripNode.id)} words={words} lang={lang} t={t} />
+            ) : stripNode.kind === "brain" ? (
+              <BrainCard node={stripNode} open={opened === stripNode.brain.id} onOpen={() => go(stripNode)} lang={lang} t={t} />
+            ) : (
+              <TagCard node={stripNode} crossed={isStruck(stripNode, struck)} t={t} />
+            )}
             <Connections node={stripNode} walk={walk} t={t} />
           </div>
         )}
@@ -590,6 +628,17 @@ function WalkPanel({ anchorKey, struck: struckTags }: { anchorKey: string; struc
             {k.text}
           </span>
         ))}
+        {view !== "off" && (
+          <span className="inline-flex items-center gap-1">
+            <svg width="14" height="14" viewBox="-7 -7 14 14" aria-hidden="true" className="text-muted-foreground">
+              <path d={diamond(5)} fill="currentColor" />
+            </svg>
+            <svg width="24" height="8" aria-hidden="true">
+              <line x1="2" y1="4" x2="22" y2="4" className="stroke-muted-foreground" strokeWidth={2.4} strokeLinecap="round" strokeDasharray="6 5" />
+            </svg>
+            {t("walkKeyBrain")}
+          </span>
+        )}
         {multi &&
           (["shared", "only"] as Share[]).map((share) => (
             <span key={share} className="inline-flex items-center gap-1">
@@ -600,7 +649,35 @@ function WalkPanel({ anchorKey, struck: struckTags }: { anchorKey: string; struc
             </span>
           ))}
       </div>
+
+      {opened && (
+        <section className="mt-4 rounded-2xl border border-border bg-card p-3">
+          <div className="mb-2 flex flex-wrap items-center gap-2">
+            <Button size="sm" variant="secondary" tip={t("tipWalkBrainClose")} onClick={() => setOpened(null)}>
+              {t("walkBrainClose")}
+            </Button>
+          </div>
+          <ReadingById key={opened} id={opened} />
+        </section>
+      )}
     </>
+  );
+
+  // Whether Brain outputs are drawn, and of which function.
+  const brainBar = (
+    <div className="mb-2 flex flex-wrap gap-2">
+      {BRAIN_VIEWS.map((v) => (
+        <Button key={v} size="sm" variant={view === v ? "primary" : "secondary"} tip={t(VIEW_LABEL[v].tip)} aria-pressed={view === v} onClick={() => setView(v)}>
+          {t(VIEW_LABEL[v].label)}
+        </Button>
+      ))}
+      {view !== "off" &&
+        [null, ...JOBS_SHOWN].map((k) => (
+          <Button key={k ?? "any"} size="sm" variant={job === k ? "primary" : "secondary"} tip={t("tipWalkBrainJob")} aria-pressed={job === k} onClick={() => setJob(k)}>
+            {k ? t(JOB_LABEL[k]) : t("walkBrainAny")}
+          </Button>
+        ))}
+    </div>
   );
 
   return (
@@ -625,6 +702,8 @@ function WalkPanel({ anchorKey, struck: struckTags }: { anchorKey: string; struc
         {!multi && centre.kind === "tag" && centre.meaning && <p className="w-full text-sm text-muted-foreground">{centre.meaning}</p>}
         {centre.kind === "note" && summaryOf(centre) && <p className="w-full text-sm text-muted-foreground">{summaryOf(centre)}</p>}
       </div>
+      {brainBar}
+      {view !== "off" && !walk.nodes.some((n) => n.kind === "brain") && <p className="mb-2 text-sm text-muted-foreground">{t("walkBrainNone")}</p>}
 
       {beside ? (
         <div style={{ display: "grid", gridTemplateColumns: `minmax(0, 1fr) ${SIDE_W}px`, gap: SIDE_GAP, alignItems: "start" }}>
@@ -708,6 +787,22 @@ function NoteCard({ node, summary, share, words, lang, t }: { node: Extract<Walk
   );
 }
 
+function BrainCard({ node, open, onOpen, lang, t }: { node: Extract<WalkNode, { kind: "brain" }>; open: boolean; onOpen: () => void; lang: Lang; t: T }) {
+  return (
+    <div>
+      <p className="font-medium">{node.brain.title || t(JOB_LABEL[node.brain.job])}</p>
+      <p className="mb-1 text-xs text-muted-foreground">
+        {t(JOB_LABEL[node.brain.job])} · {formatDateShort(node.at, lang)} · {t("walkBrainRead", { n: node.read })}
+      </p>
+      {!open && (
+        <Button size="sm" variant="secondary" className="mt-2" tip={t("tipWalkBrainOpen")} onClick={onOpen}>
+          {t("walkBrainOpen")}
+        </Button>
+      )}
+    </div>
+  );
+}
+
 function TagCard({ node, crossed, t }: { node: Extract<WalkNode, { kind: "tag" }>; crossed: boolean; t: T }) {
   return (
     <div>
@@ -742,6 +837,7 @@ function EdgeCard({ edge, walk, t }: { edge: WalkEdge; walk: Walk; t: T }) {
   const b = node(edge.b);
   if (!a || !b) return null;
   if (edge.kind === "under" && a.kind === "tag" && b.kind === "tag") return <p>{t("webParentKept", { tag: a.name, parent: b.name })}</p>;
+  if (edge.kind === "read" && a.kind === "brain") return <p>{t(b.kind === "tag" ? "webBrainReadTag" : "webBrainReadNote", { output: nameOf(a), name: nameOf(b) })}</p>;
   if (a.kind !== "note" || b.kind !== "note") return null;
   if (edge.kind === "link") {
     return (

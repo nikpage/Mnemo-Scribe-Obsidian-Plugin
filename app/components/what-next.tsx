@@ -215,7 +215,7 @@ export function ReadingProse({ text, more = [] }: { text: string; more?: { part:
 }
 
 /** One Brain output read back by its id, free: its text with every Elaborate. */
-function ReadingById({ id }: { id: string }) {
+export function ReadingById({ id }: { id: string }) {
   const { data } = useApi<{ reading: { reading: string | null }; more: { part: string | null; reading: string | null }[] }>(`/api/notes/what-next?id=${encodeURIComponent(id)}`);
   const text = data?.reading.reading;
   return text ? <ReadingProse text={text} more={data.more} /> : null;

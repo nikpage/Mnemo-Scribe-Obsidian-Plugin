@@ -4,6 +4,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { quoteFound } from "@/lib/note/angle-filter";
 import { readingSections } from "@/lib/note/reading-sections";
 import { EVERYTHING, type Kind, type Narrow, type Scope, subjectOf } from "@/lib/note/what-next-target";
+import { type BrainRef, joinsOf } from "@/lib/note/walk-brain";
 
 /**
  * The Brain library: every reading the person has had, by what it is called
@@ -114,4 +115,35 @@ export async function findReadings(
     rows.push({ id: r.id, scope: r.scope, target: r.target, created_at: r.created_at, title: readingTitle(r), notes: r.notes ?? 0 });
   }
   return rows.slice(0, SEARCH_MAX);
+}
+
+/** The most outputs the Web is sent: far past a year of the monthly limit. */
+export const WEB_BRAIN_MAX = 1000;
+
+/**
+ * Every output the Web can draw, newest first: those that stored the notes
+ * they read (from `075`), each with the notes it joins (`joinsOf()`). Free.
+ */
+export async function brainRefs(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  admin: SupabaseClient<any, any, any>,
+  userId: string
+): Promise<BrainRef[]> {
+  const { data, error } = await admin
+    .from("what_next_readings")
+    .select("id, scope, target, created_at, title, reading, read_ids, elsewhere_ids, extracts")
+    .eq("user_id", userId)
+    .eq("status", "done")
+    .is("parent_id", null)
+    .not("read_ids", "is", null)
+    .order("created_at", { ascending: false })
+    .limit(WEB_BRAIN_MAX);
+  if (error) throw new Error(error.message);
+  return (data || []).map((r) => ({
+    id: r.id,
+    title: readingTitle(r),
+    job: kindOf(r.scope, r.target),
+    at: r.created_at,
+    joins: joinsOf([...(r.read_ids ?? []), ...(r.elsewhere_ids ?? [])], ((r.extracts ?? []) as Extract[]).map((e) => e.id)),
+  }));
 }

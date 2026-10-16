@@ -60,7 +60,7 @@ export function WalkList({ rows, height, lit, struck, centre, shares, words, onP
             onClick={() => n.id !== centre && onGo(n)}
             onKeyDown={(ev) => ev.key === "Enter" && n.id !== centre && onGo(n)}
           >
-            <span aria-hidden style={{ flex: "none", width: 10, height: 10, borderRadius: "50%", boxSizing: "border-box", border: `2px solid ${colour}`, background: tag ? "transparent" : colour }} />
+            <span aria-hidden style={{ flex: "none", width: 10, height: 10, borderRadius: n.kind === "brain" ? 2 : "50%", transform: n.kind === "brain" ? "rotate(45deg) scale(0.85)" : undefined, boxSizing: "border-box", border: `2px solid ${colour}`, background: tag ? "transparent" : colour }} />
             <span className="truncate text-sm" style={{ flex: 1, minWidth: 0, fontWeight: n.id === centre || tag ? 600 : 400, textDecoration: isStruck(n, struck) ? "line-through" : undefined }}>
               {nameOf(n)}
             </span>

@@ -38,9 +38,9 @@ const hash = (text: string): number => {
   return (h >>> 0) / 4294967296;
 };
 
-const labelOf = (n: WalkNode) => (n.kind === "tag" ? `#${n.name}` : n.note.title);
+const labelOf = (n: WalkNode) => (n.kind === "tag" ? `#${n.name}` : n.kind === "brain" ? n.brain.title : n.note.title);
 const short = (text: string, max = 22) => (text.length > max ? `${text.slice(0, max - 1)}…` : text);
-export const radius = (n: WalkNode) => (n.kind === "tag" ? Math.min(30, 11 + 4.2 * Math.sqrt(n.count)) : 7);
+export const radius = (n: WalkNode) => (n.kind === "tag" ? Math.min(30, 11 + 4.2 * Math.sqrt(n.count)) : n.kind === "brain" ? 9 : 7);
 
 const DAY = 86400000;
 /** A silence this long, and this many times the usual gap, is shown as a break. */
@@ -103,8 +103,8 @@ export function layoutWalk(walk: Walk, width: number, height: number, anchoring?
   // u runs along time, v across it.
   const U = along === "x" ? width : height;
   const V = along === "x" ? height : width;
-  // Only notes have a date; a tag is placed from the notes it holds, below.
-  const times = walk.nodes.filter((n) => n.kind === "note").map((n) => Date.parse(n.at)).filter((t) => Number.isFinite(t));
+  // Notes and Brain outputs have a date; a tag is placed from the notes it holds, below.
+  const times = walk.nodes.filter((n) => n.kind !== "tag").map((n) => Date.parse(n.at)).filter((t) => Number.isFinite(t));
   const from = times.length ? Math.min(...times) : null;
   const to = times.length ? Math.max(...times) : null;
   const span = from !== null && to !== null ? to - from : 0;
@@ -168,12 +168,12 @@ export function layoutWalk(walk: Walk, width: number, height: number, anchoring?
   const uOf = new Map<string, number>();
   for (const n of walk.nodes) {
     const ms = Date.parse(n.at);
-    if (n.kind === "note" && Number.isFinite(ms)) uOf.set(n.id, place(ms));
+    if (n.kind !== "tag" && Number.isFinite(ms)) uOf.set(n.id, place(ms));
   }
   for (let pass = 0; pass < 4; pass++) {
     for (const n of walk.nodes) {
       if (n.kind !== "tag" || uOf.has(n.id)) continue;
-      const near = walk.edges.flatMap((e) => (e.a === n.id ? [e.b] : e.b === n.id ? [e.a] : [])).filter((id) => uOf.has(id) && (pass > 0 || byId.get(id)?.kind === "note"));
+      const near = walk.edges.flatMap((e) => (e.a === n.id ? [e.b] : e.b === n.id ? [e.a] : [])).filter((id) => uOf.has(id) && (pass > 0 || byId.get(id)?.kind !== "tag"));
       if (near.length) uOf.set(n.id, near.reduce((sum, id) => sum + uOf.get(id)!, 0) / near.length);
     }
   }

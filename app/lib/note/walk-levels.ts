@@ -24,8 +24,8 @@ export function drawOrder<T extends { edge: WalkEdge }>(held: T[], ringOf: Map<s
   return held.map((h) => ({ ...h, level: edgeLevel(h.edge, ringOf) })).sort((x, y) => y.level - x.level);
 }
 
-/** The strongest reasons first: a note link, a shared subject or thread, a tag's parent, a note's tag. */
-const REASON_ORDER: Record<WalkEdge["kind"], number> = { link: 0, subject: 1, theme: 1, under: 2, carries: 3 };
+/** The strongest reasons first: a note link, a shared subject or thread, a Brain output's reading, a tag's parent, a note's tag. */
+const REASON_ORDER: Record<WalkEdge["kind"], number> = { link: 0, subject: 1, theme: 1, read: 1, under: 2, carries: 3 };
 
 /** Every line of the picture that touches one node and has a reason to read, the strongest first; a note carrying a tag is the tag chips already shown. */
 export function connectionsOf(walk: Walk, id: string): WalkEdge[] {
@@ -57,11 +57,13 @@ const everything = { label: "All notes" };
 export const setAllLabel = (label: string) => {
   everything.label = label;
 };
-export const nameOf = (n: WalkNode) => (n.kind === "tag" ? (n.name === ALL_TAG ? everything.label : `#${n.name}`) : n.note.title);
+export const nameOf = (n: WalkNode) => (n.kind === "tag" ? (n.name === ALL_TAG ? everything.label : `#${n.name}`) : n.kind === "brain" ? n.brain.title : n.note.title);
+/** Tags, then notes, then Brain outputs. */
+const RANK: Record<WalkNode["kind"], number> = { tag: 0, note: 1, brain: 2 };
 
 /**
  * The walk as a tree from the centre, in the order a person reads it: tags
- * before notes, tags by size, notes newest first. A node touching several
+ * before notes before Brain outputs, tags by size, the rest newest first. A node touching several
  * nodes one step nearer sits under the first and is shown again, shut, under
  * each of the others, so a thing reached two ways is seen to be.
  */
@@ -78,7 +80,7 @@ export function listOf(walk: Walk): Row[] {
     if (!nearer.get(to.id)?.some((n) => n.id === from.id)) nearer.set(to.id, [...(nearer.get(to.id) ?? []), from]);
   }
   const order = (x: WalkNode, y: WalkNode) =>
-    (x.kind === y.kind ? 0 : x.kind === "tag" ? -1 : 1) ||
+    RANK[x.kind] - RANK[y.kind] ||
     (x.kind === "tag" && y.kind === "tag" ? y.count - x.count || x.name.localeCompare(y.name) : 0) ||
     (x.at < y.at ? 1 : x.at > y.at ? -1 : 0) ||
     x.id.localeCompare(y.id);

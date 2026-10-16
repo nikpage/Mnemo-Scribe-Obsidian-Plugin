@@ -5,6 +5,8 @@ import { noteName } from "@/lib/note/filing";
 import type { LinkType } from "@/lib/note/links";
 import { type Parents, type TagRow, parentsOf, under } from "@/lib/note/tag-tree";
 import { SUBJECT_MAX_NOTES, isSelfSubject, type NoteRef, type WebInput, type WebLink, type WebNote } from "@/lib/note/web";
+import type { BrainRef } from "@/lib/note/walk-brain";
+import type { Kind } from "@/lib/note/what-next-target";
 
 /**
  * The walk: a few steps out from one tag or note, never the whole store.
@@ -31,10 +33,12 @@ const NOTE_OUT = { tags: 3, notes: 4 };
 
 export type WalkNode =
   | { id: string; kind: "tag"; ring: number; from: string | null; name: string; count: number; meaning: string | null; at: string }
-  | { id: string; kind: "note"; ring: number; from: string | null; note: NoteRef; at: string; tags: string[]; summary: string | null };
+  | { id: string; kind: "note"; ring: number; from: string | null; note: NoteRef; at: string; tags: string[]; summary: string | null }
+  /** A Brain output drawn in the walk (`walk-brain.ts`), dated when it was written; `read` = how many of the walk's notes it read. */
+  | { id: string; kind: "brain"; ring: number; from: string | null; brain: { id: string; title: string; job: Kind }; at: string; read: number };
 
-/** `under`: tag a sits under tag b. `carries`: note a carries tag b. `link`: note a (later) to note b. */
-export type WalkEdge = { id: string; a: string; b: string; kind: "under" | "carries" | "link" | "subject" | "theme"; type?: LinkType; why: string | null; name?: string };
+/** `under`: tag a sits under tag b. `carries`: note a carries tag b. `link`: note a (later) to note b. `read`: Brain output a read note b (or a note under tag b). */
+export type WalkEdge = { id: string; a: string; b: string; kind: "under" | "carries" | "link" | "subject" | "theme" | "read"; type?: LinkType; why: string | null; name?: string };
 export type Walk = { centre: string; nodes: WalkNode[]; edges: WalkEdge[] };
 export type Centre = { tag: string } | { note: string };
 /** The centre of the whole store: a tag name no one can type (tags are normalised), joined above every top-level tag. */
@@ -256,10 +260,12 @@ export type WalkStore = {
   themes: { name: string; evidence: string[] }[];
   /** Pairs of notes that read alike: [earlier id, later id, 0 to 1] (`neighbour-table.ts`). */
   neighbours: [string, string, number][];
+  /** The Brain outputs, each with the notes it joins (`walk-brain.ts`); sent for a store of any size. */
+  brain: BrainRef[];
 };
 
-export function storeOf(input: WebInput, neighbours: [string, string, number][] = []): WalkStore {
-  if (input.notes.length > STORE_NOTES_MAX) return { more: true, rows: [], notes: [], links: [], facts: [], themes: [], neighbours: [] };
+export function storeOf(input: WebInput, neighbours: [string, string, number][] = [], brain: BrainRef[] = []): WalkStore {
+  if (input.notes.length > STORE_NOTES_MAX) return { more: true, rows: [], notes: [], links: [], facts: [], themes: [], neighbours: [], brain };
   // Only what groups notes: a subject said by more notes than that joins nothing (`SUBJECT_MAX_NOTES`).
   const said = new Map<string, Set<string>>();
   for (const f of input.facts) if (!isSelfSubject(f.subject)) said.set(f.subject.trim(), (said.get(f.subject.trim()) ?? new Set()).add(f.recording_id));
@@ -269,7 +275,8 @@ export function storeOf(input: WebInput, neighbours: [string, string, number][] 
   const notes = input.notes.map((n) => ({ id: n.id, path: n.path, label: n.label, recorded_at: n.recorded_at, tags: n.tags }));
   // Only pairs between notes in use: the rest could never be drawn.
   const inUse = new Set(notes.map((n) => n.id));
-  return { more: false, rows: input.rows, notes, links: input.links, facts, themes: input.themes, neighbours: neighbours.filter(([a, b]) => inUse.has(a) && inUse.has(b)) };
+  const joined = brain.map((o) => ({ ...o, joins: o.joins.filter((id) => inUse.has(id)) })).filter((o) => o.joins.length);
+  return { more: false, rows: input.rows, notes, links: input.links, facts, themes: input.themes, neighbours: neighbours.filter(([a, b]) => inUse.has(a) && inUse.has(b)), brain: joined };
 }
 
 /** The walk's inputs, back from what the browser holds. */

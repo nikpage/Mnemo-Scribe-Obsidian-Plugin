@@ -20,7 +20,7 @@ export type Meaning = {
 };
 
 /** How firmly a line ties its two ends. */
-const WEIGHT: Record<WalkEdge["kind"], number> = { link: 3, subject: 2, theme: 1.5, under: 2, carries: 1 };
+const WEIGHT: Record<WalkEdge["kind"], number> = { link: 3, subject: 2, theme: 1.5, under: 2, carries: 1, read: 1.5 };
 /** Fewer nodes than this are not worth grouping. */
 export const CLUSTER_MIN_NODES = 6;
 /** A likeness of 0.5 ties nothing; each tenth above it adds 0.8 up to 4, so close in meaning outweighs a link. */
