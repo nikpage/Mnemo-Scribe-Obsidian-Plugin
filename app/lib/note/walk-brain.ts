@@ -79,5 +79,18 @@ function withoutNotes(walk: Walk, outputs: string[]): Walk {
       }
     }
   }
-  return { centre: walk.centre, nodes: walk.nodes.filter((n) => reached.has(n.id)), edges: edges.filter((e) => reached.has(e.a) && reached.has(e.b)) };
+  const kept = edges.filter((e) => reached.has(e.a) && reached.has(e.b));
+  const nodes = walk.nodes.filter((n) => reached.has(n.id));
+  // A thing reached from a note now gone is reached from what it still touches one step nearer, else the centre.
+  const ringOf = new Map(nodes.map((n) => [n.id, n.ring]));
+  const nearer = (n: WalkNode) =>
+    kept
+      .flatMap((e) => (e.a === n.id ? [e.b] : e.b === n.id ? [e.a] : []))
+      .filter((id) => (ringOf.get(id) ?? Infinity) < n.ring)
+      .sort((x, y) => ringOf.get(x)! - ringOf.get(y)! || x.localeCompare(y))[0];
+  return {
+    centre: walk.centre,
+    nodes: nodes.map((n) => (n.from && gone.has(n.from) ? { ...n, from: nearer(n) ?? walk.centre } : n)),
+    edges: kept,
+  };
 }

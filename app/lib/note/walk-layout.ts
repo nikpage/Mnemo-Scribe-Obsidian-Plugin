@@ -214,7 +214,8 @@ export function layoutWalk(walk: Walk, width: number, height: number, anchoring?
       const b = bandOf.get(n.id)!;
       v = (b.lo + b.hi) / 2 + (hash(n.id) - 0.5) * (b.hi - b.lo) * 0.7;
       bounds.set(n.id, [b.lo + 6, b.hi - 6]);
-    } else if (n.from) {
+    } else if (n.from && at.has(n.from)) {
+      // Only a thing already placed: one reached from what is not drawn stands in the middle.
       const parent = at.get(n.from)!;
       const k = kids.get(n.from) ?? 0;
       kids.set(n.from, k + 1);
