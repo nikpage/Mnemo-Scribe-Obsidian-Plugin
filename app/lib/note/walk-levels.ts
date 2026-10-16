@@ -1,6 +1,6 @@
 // [Librarian]
 
-import type { Walk, WalkEdge, WalkNode } from "@/lib/note/walk";
+import { ALL_TAG, type Walk, type WalkEdge, type WalkNode } from "@/lib/note/walk";
 
 /**
  * How the walk is told apart at a glance: three levels, each its own colour
@@ -52,7 +52,12 @@ export type Row = {
 /** A tag the person struck through in the set: still drawn and listed, crossed out. Only a tag can be. */
 export const isStruck = (n: WalkNode, struck: ReadonlySet<string>): boolean => n.kind === "tag" && struck.has(n.name);
 
-export const nameOf = (n: WalkNode) => (n.kind === "tag" ? `#${n.name}` : n.note.title);
+/** What the whole-store centre is called, in the person's language; set by the screen before it draws. */
+const everything = { label: "All notes" };
+export const setAllLabel = (label: string) => {
+  everything.label = label;
+};
+export const nameOf = (n: WalkNode) => (n.kind === "tag" ? (n.name === ALL_TAG ? everything.label : `#${n.name}`) : n.note.title);
 
 /**
  * The walk as a tree from the centre, in the order a person reads it: tags

@@ -37,6 +37,8 @@ export type WalkNode =
 export type WalkEdge = { id: string; a: string; b: string; kind: "under" | "carries" | "link" | "subject" | "theme"; type?: LinkType; why: string | null; name?: string };
 export type Walk = { centre: string; nodes: WalkNode[]; edges: WalkEdge[] };
 export type Centre = { tag: string } | { note: string };
+/** The centre of the whole store: a tag name no one can type (tags are normalised), joined above every top-level tag. */
+export const ALL_TAG = "∗ all notes";
 
 const tagId = (name: string) => `t:${name}`;
 const noteId = (id: string) => `n:${id}`;
@@ -48,25 +50,15 @@ const refOf = (note: WebNote): NoteRef => ({ id: note.id, path: note.path, title
 const newestFirst = (a: WebNote, b: WebNote) => (a.recorded_at < b.recorded_at ? 1 : a.recorded_at > b.recorded_at ? -1 : a.id.localeCompare(b.id));
 const median = (dates: string[]): string => [...dates].sort()[Math.floor(dates.length / 2)];
 
-/** The tag in use with the most notes, ties by name; else the newest note; else nothing. */
-export function defaultCentre(input: WebInput): Centre | null {
-  const parents = parentsOf(input.rows);
-  const names = new Set<string>();
-  for (const note of input.notes) for (const tag of note.tags || []) names.add(tag);
-  let best: { name: string; n: number } | null = null;
-  for (const name of [...names].sort()) {
-    const branch = under(name, parents);
-    const n = input.notes.filter((note) => (note.tags || []).some((tag) => branch.has(tag))).length;
-    if (!best || n > best.n) best = { name, n };
-  }
-  if (best) return { tag: best.name };
-  const newest = [...input.notes].sort(newestFirst)[0];
-  return newest ? { note: newest.id } : null;
-}
-
 /** The walk from a centre; null when the centre has no note in use. */
 export function buildWalk(input: WebInput, centre: Centre): Walk | null {
   const parents: Parents = parentsOf(input.rows);
+  // The whole store: every top-level tag in use sits under one centre, and notes with no tag hang from it.
+  const all = "tag" in centre && centre.tag === ALL_TAG;
+  if (all) {
+    const used = new Set(input.notes.flatMap((note) => note.tags || []));
+    for (const tag of used) if (!parents.get(tag)?.size) parents.set(tag, new Set([ALL_TAG]));
+  }
   const byId = new Map(input.notes.map((note) => [note.id, note]));
 
   const children = new Map<string, string[]>();
@@ -78,7 +70,7 @@ export function buildWalk(input: WebInput, centre: Centre): Walk | null {
     let s = stat.get(tag);
     if (!s) {
       const branch = under(tag, parents);
-      const inside = input.notes.filter((note) => (note.tags || []).some((t) => branch.has(t)));
+      const inside = tag === ALL_TAG ? input.notes : input.notes.filter((note) => (note.tags || []).some((t) => branch.has(t)));
       s = { count: inside.length, at: inside.length ? median(inside.map((n) => n.recorded_at)) : "" };
       stat.set(tag, s);
     }
@@ -87,6 +79,7 @@ export function buildWalk(input: WebInput, centre: Centre): Walk | null {
   const inUse = (tag: string) => statOf(tag).count > 0;
   const carrying = new Map<string, WebNote[]>();
   for (const note of input.notes) for (const tag of note.tags || []) carrying.set(tag, [...(carrying.get(tag) ?? []), note]);
+  if (all) carrying.set(ALL_TAG, input.notes.filter((note) => !note.tags?.length));
   for (const list of carrying.values()) list.sort(newestFirst);
 
   // Notes reach each other outside their tags.
@@ -138,7 +131,7 @@ export function buildWalk(input: WebInput, centre: Centre): Walk | null {
       const tag = id.slice(2);
       const tags = [...(parents.get(tag) ?? []), ...(children.get(tag) ?? [])].filter(inUse).sort((a, b) => statOf(b).count - statOf(a).count || a.localeCompare(b));
       const notes = carrying.get(tag) ?? [];
-      return [...tags.map(tagId).filter(fresh).slice(0, TAG_OUT.tags), ...notes.map((n) => noteId(n.id)).filter(fresh).slice(0, TAG_OUT.notes)];
+      return [...tags.map(tagId).filter(fresh).slice(0, tag === ALL_TAG ? RING_MAX[1] : TAG_OUT.tags), ...notes.map((n) => noteId(n.id)).filter(fresh).slice(0, TAG_OUT.notes)];
     }
     const note = byId.get(id.slice(2))!;
     const tags = [...new Set(note.tags || [])].filter(inUse).sort((a, b) => statOf(b).count - statOf(a).count || a.localeCompare(b));
@@ -168,7 +161,7 @@ export function buildWalk(input: WebInput, centre: Centre): Walk | null {
     if (node.kind !== "tag") continue;
     for (const p of [...(parents.get(node.name) ?? [])].sort()) if (nodes.has(tagId(p))) edges.push({ id: `u:${node.name}\n${p}`, a: node.id, b: tagId(p), kind: "under", why: null });
   }
-  for (const note of shownNotes) for (const tag of [...new Set(note.tags)].sort()) if (nodes.has(tagId(tag))) edges.push({ id: `c:${note.note.id}\n${tag}`, a: note.id, b: tagId(tag), kind: "carries", why: null });
+  for (const note of shownNotes) for (const tag of [...new Set(note.tags.length || !all ? note.tags : [ALL_TAG])].sort()) if (nodes.has(tagId(tag))) edges.push({ id: `c:${note.note.id}\n${tag}`, a: note.id, b: tagId(tag), kind: "carries", why: null });
   const seen = new Set<string>();
   for (const note of shownNotes) {
     const best = new Map<string, Relation>();
@@ -261,10 +254,12 @@ export type WalkStore = {
   links: WebLink[];
   facts: { recording_id: string; subject: string }[];
   themes: { name: string; evidence: string[] }[];
+  /** Pairs of notes that read alike: [earlier id, later id, 0 to 1] (`neighbour-table.ts`). */
+  neighbours: [string, string, number][];
 };
 
-export function storeOf(input: WebInput): WalkStore {
-  if (input.notes.length > STORE_NOTES_MAX) return { more: true, rows: [], notes: [], links: [], facts: [], themes: [] };
+export function storeOf(input: WebInput, neighbours: [string, string, number][] = []): WalkStore {
+  if (input.notes.length > STORE_NOTES_MAX) return { more: true, rows: [], notes: [], links: [], facts: [], themes: [], neighbours: [] };
   // Only what groups notes: a subject said by more notes than that joins nothing (`SUBJECT_MAX_NOTES`).
   const said = new Map<string, Set<string>>();
   for (const f of input.facts) if (!isSelfSubject(f.subject)) said.set(f.subject.trim(), (said.get(f.subject.trim()) ?? new Set()).add(f.recording_id));
@@ -272,7 +267,9 @@ export function storeOf(input: WebInput): WalkStore {
   for (const [subject, ids] of said) if (subject && ids.size > 1 && ids.size <= SUBJECT_MAX_NOTES) for (const id of ids) facts.push({ recording_id: id, subject });
   // Named field by field: whatever a read returned beyond these never reaches the browser.
   const notes = input.notes.map((n) => ({ id: n.id, path: n.path, label: n.label, recorded_at: n.recorded_at, tags: n.tags }));
-  return { more: false, rows: input.rows, notes, links: input.links, facts, themes: input.themes };
+  // Only pairs between notes in use: the rest could never be drawn.
+  const inUse = new Set(notes.map((n) => n.id));
+  return { more: false, rows: input.rows, notes, links: input.links, facts, themes: input.themes, neighbours: neighbours.filter(([a, b]) => inUse.has(a) && inUse.has(b)) };
 }
 
 /** The walk's inputs, back from what the browser holds. */

@@ -6,11 +6,12 @@ import useSWR, { preload } from "swr";
 import { allAnswered, answered, api, useApi } from "@/lib/api";
 import { useLang } from "@/hooks/use-lang";
 import { formatDateShort, formatFactDate } from "@/lib/format";
-import { type Walk, type WalkEdge, type WalkNode, type WalkStore, WALK_STORE_URL, buildWalk, defaultCentre, inputOf } from "@/lib/note/walk";
+import { type Walk, type WalkEdge, type WalkNode, type WalkStore, WALK_STORE_URL, ALL_TAG, buildWalk, inputOf } from "@/lib/note/walk";
 import { type Layout, type Side, layoutWalk, markAt } from "@/lib/note/walk-layout";
 import { type Share, type Picture, mergeWalks } from "@/lib/note/walk-set";
 import { CLUSTER_MIN_NODES, type Meaning, type Tie } from "@/lib/note/walk-clusters";
-import { LEVEL_WIDTH, type Row, connectionsOf, drawOrder, isStruck, levelColour, levelOfRing, listOf, nameOf, shownOf } from "@/lib/note/walk-levels";
+import { meaningFrom } from "@/lib/note/walk-meaning";
+import { LEVEL_WIDTH, type Row, connectionsOf, drawOrder, isStruck, levelColour, levelOfRing, listOf, nameOf, setAllLabel, shownOf } from "@/lib/note/walk-levels";
 import { ShareGlyph, ShareMark, WalkList } from "@/components/walk-list";
 import { NoteLink } from "@/components/note-link";
 import { PHRASE } from "@/components/note-links";
@@ -47,13 +48,17 @@ async function fetchWalks(key: string): Promise<Walk[]> {
   if (!walks.length) throw failed;
   return walks;
 }
-/** Which of a picture's notes read alike, asked for once the picture's notes are known; none for several anchors (they are the bands) or a walk too small to group. */
-const fetchMeaning = (key: string) => api<Meaning>(key);
-function meaningUrlOf(w: Walk | null, multi: boolean): string | null {
-  if (!w || multi || w.nodes.length < CLUSTER_MIN_NODES) return null;
+/** The notes of a picture whose likeness is wanted; none for several anchors (they are the bands) or a walk too small to group. */
+function meaningIdsOf(w: Walk | null, multi: boolean): string[] {
+  if (!w || multi || w.nodes.length < CLUSTER_MIN_NODES) return [];
   const ids = w.nodes.flatMap((n) => (n.kind === "note" ? [n.note.id] : [])).sort();
-  return ids.length > 1 ? `/api/notes/walk-meaning?ids=${encodeURIComponent(ids.join(","))}` : null;
+  return ids.length > 1 ? ids : [];
 }
+/** Asked of the server only when the store is too large to hold in the browser; otherwise worked out from its copy. */
+const meaningUrlOf = (w: Walk | null, multi: boolean): string | null => {
+  const ids = meaningIdsOf(w, multi);
+  return ids.length ? `/api/notes/walk-meaning?ids=${encodeURIComponent(ids.join(","))}` : null;
+};
 const url = (at: Where | null) => (!at ? "/api/notes/walk" : "tag" in at ? `/api/notes/walk?tag=${encodeURIComponent(at.tag)}` : `/api/notes/walk?note=${encodeURIComponent(at.note)}`);
 const whereOf = (n: WalkNode): Where => (n.kind === "tag" ? { tag: n.name } : { note: n.note.id });
 /** Slow in, quick through the middle, slow out: no jolt at the start, no long tail at the end. */
@@ -160,6 +165,7 @@ export function WebView({ set }: { set?: WebSet }) {
 /** The picture of a set's anchors, or of the usual centre; a walk taken since goes where it was taken, and Back returns. */
 function WalkPanel({ anchorKey, struck: struckTags }: { anchorKey: string; struck: string[] }) {
   const { t, lang } = useLang();
+  setAllLabel(t("walkAll"));
   const struck = useMemo(() => new Set(struckTags), [struckTags]);
   const anchors = useMemo(() => (anchorKey ? anchorKey.split(",") : []), [anchorKey]);
   const [at, setAt] = useState<Where | null>(null);
@@ -196,11 +202,10 @@ function WalkPanel({ anchorKey, struck: struckTags }: { anchorKey: string; struc
   const here = useMemo(() => {
     if (!input) return null;
     const from: Where[] = at ? [at] : anchors.map((tag) => ({ tag }));
-    // A set's tag no note carries any more is left out; with none left it falls back to the usual centre.
+    // A set's tag no note carries any more is left out; with none left the picture is of every note.
     let walks = from.map((c) => buildWalk(input, c)).filter((w): w is Walk => !!w);
     if (!walks.length) {
-      const usual = defaultCentre(input);
-      const w = usual ? buildWalk(input, usual) : null;
+      const w = buildWalk(input, { tag: ALL_TAG });
       walks = w ? [w] : [];
     }
     return walks.length ? mergeWalks(walks) : null;
@@ -209,9 +214,13 @@ function WalkPanel({ anchorKey, struck: struckTags }: { anchorKey: string; struc
   const wanted = useMemo(() => (serverMode ? (remote.data?.length ? mergeWalks(remote.data) : null) : here), [serverMode, remote.data, here]);
   // Which notes read alike is part of how the picture is laid out, so a picture is drawn only once that has
   // answered (or failed, when it is drawn without), and the one before stays until then: nothing lands late and moves it.
-  const meaning = useApi<Meaning>(meaningUrlOf(wanted?.walk ?? null, !!wanted && wanted.anchors.length > 1), { revalidateOnFocus: false, revalidateOnReconnect: false });
+  const asking = serverMode && wanted ? meaningUrlOf(wanted.walk, wanted.anchors.length > 1) : null;
+  const meaning = useApi<Meaning>(asking, { revalidateOnFocus: false, revalidateOnReconnect: false });
   const [shown, setShown] = useState<{ pic: Picture; ties: Tie[] } | null>(null);
-  if (wanted && (!meaningUrlOf(wanted.walk, wanted.anchors.length > 1) || answered(meaning)) && shown?.pic !== wanted) setShown({ pic: wanted, ties: meaning.data?.ties ?? [] });
+  if (wanted && (!asking || answered(meaning)) && shown?.pic !== wanted) {
+    const ties = asking ? (meaning.data?.ties ?? []) : meaningFrom(held?.neighbours ?? [], meaningIdsOf(wanted.walk, wanted.anchors.length > 1)).ties;
+    setShown({ pic: wanted, ties });
+  }
   const pic = wanted ? (shown?.pic ?? null) : null;
   const ties = shown?.ties;
   const walk = pic?.walk ?? null;
@@ -272,18 +281,13 @@ function WalkPanel({ anchorKey, struck: struckTags }: { anchorKey: string; struc
     timer.current = null;
   };
   /** Lights `id` after the pointer has rested on it; crossing a crowd lights nothing on the way. */
-  const aim = (id: string | null, wait: number, ahead?: Where, local?: Where) => {
+  const aim = (id: string | null, wait: number, ahead?: Where) => {
     cancelAim();
     timer.current = setTimeout(() => {
       setHover(id);
       if (id === null) setKept(null);
       // What a click here would show is asked for now, so the click has nothing to wait on.
       if (ahead) void preload(walksKey([url(ahead)]), fetchWalks);
-      // ...and, from this device's copy, which of the notes it would show read alike.
-      if (local && input) {
-        const next = meaningUrlOf(buildWalk(input, local), false);
-        if (next) void preload(next, fetchMeaning);
-      }
     }, wait);
   };
   useEffect(() => cancelAim, []);
@@ -507,7 +511,7 @@ function WalkPanel({ anchorKey, struck: struckTags }: { anchorKey: string; struc
                     tabIndex={0}
                     aria-label={nameOf(d.node)}
                     onPointerEnter={(ev) => {
-                      if (ev.pointerType !== "touch") aim(d.node.id, REST_MS, serverMode ? whereOf(d.node) : undefined, serverMode ? undefined : whereOf(d.node));
+                      if (ev.pointerType !== "touch") aim(d.node.id, REST_MS, serverMode ? whereOf(d.node) : undefined);
                     }}
                     onPointerLeave={cancelAim}
                     onPointerDown={(ev) => {
