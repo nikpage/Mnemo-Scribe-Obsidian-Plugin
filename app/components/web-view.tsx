@@ -396,6 +396,14 @@ function WalkPanel({ anchorKey, struck: struckTags }: { anchorKey: string; struc
               height={layout.height}
               fill="transparent"
               onClick={() => {
+                // Empty space: back to the anchors themselves, from any walk taken since.
+                if (trail.length) {
+                  setTrail([]);
+                  setAt(null);
+                  setChosen(null);
+                  cancelAim();
+                  setHover(null);
+                }
                 setPicked(null);
                 setKept(null);
               }}
