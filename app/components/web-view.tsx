@@ -18,7 +18,7 @@ import { PHRASE } from "@/components/note-links";
 import { Button, Notice } from "@/components/ui";
 import { showPicture } from "@/lib/note/web-picture";
 import type { WebSet } from "@/lib/note/web-set";
-import { BRAIN_VIEWS, type BrainView, withBrain } from "@/lib/note/walk-brain";
+import { BRAIN_VIEWS, type BrainView, brainOnly, withBrain } from "@/lib/note/walk-brain";
 import type { Kind } from "@/lib/note/what-next-target";
 import { JOB_LABEL, ReadingById } from "@/components/what-next";
 
@@ -31,7 +31,8 @@ import { JOB_LABEL, ReadingById } from "@/components/what-next";
  * it (under it on a phone, one swipe away) a list of the same walk, whose rows
  * light and walk the picture. Three levels, three colours (`walk-levels.ts`).
  * Brain outputs can be drawn too, beside the notes they read or in their place
- * (`walk-brain.ts`), each a diamond that opens the output under the picture.
+ * (`walk-brain.ts`), each a circle that opens the output under the picture;
+ * the notes they quote are diamonds.
  * Free of Next and server code.
  */
 
@@ -74,7 +75,7 @@ const VIEW_LABEL = {
   with: { label: "walkBrainWith", tip: "tipWalkBrainWith" },
   only: { label: "walkBrainOnly", tip: "tipWalkBrainOnly" },
 } as const;
-/** A Brain output's mark: a diamond, so it is never taken for a note or a tag. */
+/** A note a drawn Brain output quotes or names: a diamond. */
 const diamond = (r: number) => `M0 ${-r} L${r} 0 L0 ${r} L${-r} 0 Z`;
 /** Slow in, quick through the middle, slow out: no jolt at the start, no long tail at the end. */
 const ease = (x: number) => (x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2);
@@ -239,8 +240,10 @@ function WalkPanel({ anchorKey, struck: struckTags }: { anchorKey: string; struc
     const ties = asking ? (meaning.data?.ties ?? []) : meaningFrom(held?.neighbours ?? [], meaningIdsOf(wanted.walk, wanted.anchors.length > 1)).ties;
     setShown({ pic: wanted, ties });
   }
-  const pic = wanted ? (shown?.pic ?? null) : null;
+  const full = wanted ? (shown?.pic ?? null) : null;
   const ties = shown?.ties;
+  // Brain only: laid out with the notes (so tags keep their place in time), drawn and listed without them.
+  const pic = useMemo(() => (full && view === "only" ? { ...full, walk: brainOnly(full.walk), walks: full.walks.map(brainOnly) } : full), [full, view]);
   const walk = pic?.walk ?? null;
   const multi = !!pic && pic.anchors.length > 1;
 
@@ -285,7 +288,9 @@ function WalkPanel({ anchorKey, struck: struckTags }: { anchorKey: string; struc
     setPage(n);
   };
 
-  const layout = useMemo(() => (walk && pic && width > 0 ? layoutWalk(walk, width, height, multi ? { ids: pic.anchors, reach: pic.reach } : undefined, ties) : null), [walk, pic, multi, width, height, ties]);
+  const layout = useMemo(() => (full && width > 0 ? layoutWalk(full.walk, width, height, multi ? { ids: full.anchors, reach: full.reach } : undefined, ties) : null), [full, multi, width, height, ties]);
+  // The notes the drawn outputs quote or name, marked as diamonds.
+  const quoted = useMemo(() => new Set((walk?.nodes ?? []).flatMap((n) => (n.kind === "brain" ? n.brain.quoted.map((id) => `n:${id}`) : []))), [walk]);
   const { scene, e } = useGlide(walk, layout);
 
   const [hover, setHover] = useState<string | null>(null);
@@ -553,8 +558,8 @@ function WalkPanel({ anchorKey, struck: struckTags }: { anchorKey: string; struc
                       </circle>
                     )}
                     {isCentre && scene.moved && e < 1 && <circle r={d.r + 8 + 46 * e} fill="none" style={{ stroke: colour }} strokeWidth={2} opacity={0.7 * (1 - e)} />}
-                    {d.node.kind === "brain" ? (
-                      <path d={diamond(d.r + 2)} className="stroke-card" style={{ fill: colour }} strokeWidth={1.6} strokeLinejoin="round" />
+                    {quoted.has(d.node.id) ? (
+                      <path d={diamond(d.r + 3)} className="stroke-card" style={{ fill: colour }} strokeWidth={1.6} strokeLinejoin="round" />
                     ) : (
                       <circle
                         r={d.r}
@@ -631,12 +636,20 @@ function WalkPanel({ anchorKey, struck: struckTags }: { anchorKey: string; struc
         {view !== "off" && (
           <span className="inline-flex items-center gap-1">
             <svg width="14" height="14" viewBox="-7 -7 14 14" aria-hidden="true" className="text-muted-foreground">
-              <path d={diamond(5)} fill="currentColor" />
+              <circle r={5} fill="currentColor" />
             </svg>
             <svg width="24" height="8" aria-hidden="true">
               <line x1="2" y1="4" x2="22" y2="4" className="stroke-muted-foreground" strokeWidth={2.4} strokeLinecap="round" strokeDasharray="6 5" />
             </svg>
             {t("walkKeyBrain")}
+          </span>
+        )}
+        {view === "with" && (
+          <span className="inline-flex items-center gap-1">
+            <svg width="14" height="14" viewBox="-7 -7 14 14" aria-hidden="true" className="text-muted-foreground">
+              <path d={diamond(5)} fill="currentColor" />
+            </svg>
+            {t("walkKeyQuoted")}
           </span>
         )}
         {multi &&

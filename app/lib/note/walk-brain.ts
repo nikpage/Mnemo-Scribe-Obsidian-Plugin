@@ -6,7 +6,7 @@ import type { Kind } from "@/lib/note/what-next-target";
 /**
  * Brain outputs in the Web: the outputs that read the walk's notes, each its
  * own mark, beside the notes it read ("with") or in place of every note, tied
- * to the tags those notes carry ("only"). An output that read more than
+ * to the tags those notes carry ("only", `brainOnly()`). An output that read more than
  * `BRAIN_READ_MAX` notes (the whole store) joins only the notes it quoted, or
  * it would join everything. Free, worked out in the browser, free of Next and
  * server code.
@@ -16,7 +16,7 @@ export const BRAIN_VIEWS = ["off", "with", "only"] as const;
 export type BrainView = (typeof BRAIN_VIEWS)[number];
 
 /** One output as the Web holds it: no text, only what names it and the notes it joins. */
-export type BrainRef = { id: string; title: string; job: Kind; at: string; joins: string[] };
+export type BrainRef = { id: string; title: string; job: Kind; at: string; joins: string[]; /** Notes it quoted or named by title: drawn as diamonds. */ quoted: string[] };
 
 /** Past this many notes read, an output joins only the notes it quoted. */
 export const BRAIN_READ_MAX = 150;
@@ -43,7 +43,7 @@ export function withBrain(walk: Walk, outputs: BrainRef[], view: BrainView, job:
     .filter((h) => h.read.length > 0)
     .sort((a, b) => b.read.length - a.read.length || b.o.at.localeCompare(a.o.at) || a.o.id.localeCompare(b.o.id))
     .slice(0, BRAIN_MAX);
-  if (!hits.length) return view === "only" ? withoutNotes(walk, []) : walk;
+  if (!hits.length) return walk;
 
   // What each output is tied to: the notes it read, or (only) the tags they carry, the centre when they carry none shown.
   const tagsOf = new Map<string, string[]>();
@@ -58,15 +58,19 @@ export function withBrain(walk: Walk, outputs: BrainRef[], view: BrainView, job:
         : [...new Set(read.flatMap((n) => (n === walk.centre ? [n] : (tagsOf.get(n) ?? []))))].sort();
     const to = ends.length ? ends : [walk.centre];
     const nearest = [...to].sort((a, b) => (ringOf.get(a) ?? 3) - (ringOf.get(b) ?? 3) || a.localeCompare(b))[0];
-    nodes.push({ id, kind: "brain", ring: Math.min(3, (ringOf.get(nearest) ?? 2) + 1), from: nearest, brain: { id: o.id, title: o.title, job: o.job }, at: o.at, read: read.length });
+    nodes.push({ id, kind: "brain", ring: Math.min(3, (ringOf.get(nearest) ?? 2) + 1), from: nearest, brain: { id: o.id, title: o.title, job: o.job, quoted: o.quoted }, at: o.at, read: read.length });
     for (const end of to) edges.push({ id: `r:${o.id}\n${end}`, a: id, b: end, kind: "read", why: null });
   }
-  const added = { centre: walk.centre, nodes: [...walk.nodes, ...nodes], edges: [...walk.edges, ...edges] };
-  return view === "with" ? added : withoutNotes(added, nodes.map((n) => n.id));
+  return { centre: walk.centre, nodes: [...walk.nodes, ...nodes], edges: [...walk.edges, ...edges] };
 }
 
-/** Every note gone but the centre, and whatever then no line reaches from the centre; outputs always stay. */
-function withoutNotes(walk: Walk, outputs: string[]): Walk {
+/**
+ * Brain only, as drawn: every note gone but the centre, and whatever then no
+ * line reaches from the centre; outputs always stay. The picture is laid out
+ * on the walk before this, so a tag keeps its place in time from its notes.
+ */
+export function brainOnly(walk: Walk): Walk {
+  const outputs = walk.nodes.filter((n) => n.kind === "brain").map((n) => n.id);
   const gone = new Set(walk.nodes.filter((n): n is NoteNode => n.kind === "note" && n.id !== walk.centre).map((n) => n.id));
   const edges = walk.edges.filter((e) => !gone.has(e.a) && !gone.has(e.b));
   const reached = new Set([walk.centre, ...outputs]);

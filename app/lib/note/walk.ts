@@ -35,7 +35,7 @@ export type WalkNode =
   | { id: string; kind: "tag"; ring: number; from: string | null; name: string; count: number; meaning: string | null; at: string }
   | { id: string; kind: "note"; ring: number; from: string | null; note: NoteRef; at: string; tags: string[]; summary: string | null }
   /** A Brain output drawn in the walk (`walk-brain.ts`), dated when it was written; `read` = how many of the walk's notes it read. */
-  | { id: string; kind: "brain"; ring: number; from: string | null; brain: { id: string; title: string; job: Kind }; at: string; read: number };
+  | { id: string; kind: "brain"; ring: number; from: string | null; brain: { id: string; title: string; job: Kind; quoted: string[] }; at: string; read: number };
 
 /** `under`: tag a sits under tag b. `carries`: note a carries tag b. `link`: note a (later) to note b. `read`: Brain output a read note b (or a note under tag b). */
 export type WalkEdge = { id: string; a: string; b: string; kind: "under" | "carries" | "link" | "subject" | "theme" | "read"; type?: LinkType; why: string | null; name?: string };
@@ -275,7 +275,7 @@ export function storeOf(input: WebInput, neighbours: [string, string, number][] 
   const notes = input.notes.map((n) => ({ id: n.id, path: n.path, label: n.label, recorded_at: n.recorded_at, tags: n.tags }));
   // Only pairs between notes in use: the rest could never be drawn.
   const inUse = new Set(notes.map((n) => n.id));
-  const joined = brain.map((o) => ({ ...o, joins: o.joins.filter((id) => inUse.has(id)) })).filter((o) => o.joins.length);
+  const joined = brain.map((o) => ({ ...o, joins: o.joins.filter((id) => inUse.has(id)), quoted: o.quoted.filter((id) => inUse.has(id)) })).filter((o) => o.joins.length);
   return { more: false, rows: input.rows, notes, links: input.links, facts, themes: input.themes, neighbours: neighbours.filter(([a, b]) => inUse.has(a) && inUse.has(b)), brain: joined };
 }
 

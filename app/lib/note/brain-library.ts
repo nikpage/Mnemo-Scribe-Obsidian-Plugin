@@ -122,14 +122,25 @@ export async function findReadings(
 /** The most outputs the Web is sent: far past a year of the monthly limit. */
 export const WEB_BRAIN_MAX = 1000;
 
+/** Titles shorter than this are too common a word to say a reading named the note. */
+const TITLE_MIN = 6;
+
+/** The notes a reading's text names by title, whole title, any case: how a reading rests on a note (`RULES`). */
+export function namedIn(text: string, notes: { id: string; title: string }[]): string[] {
+  const flat = text.toLowerCase();
+  return notes.filter((n) => n.title.trim().length >= TITLE_MIN && flat.includes(n.title.trim().toLowerCase())).map((n) => n.id);
+}
+
 /**
- * Every output the Web can draw, newest first: those that stored the notes
- * they read (from `075`), each with the notes it joins (`joinsOf()`). Free.
+ * Every output the Web can draw, newest first, each with the notes it joins:
+ * those it read (from `075`, `joinsOf()`), else those its text names by title.
+ * Quoted: its extracts' notes and the notes it names. Free.
  */
 export async function brainRefs(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   admin: SupabaseClient<any, any, any>,
-  userId: string
+  userId: string,
+  notes: { id: string; title: string }[] = []
 ): Promise<BrainRef[]> {
   const { data, error } = await admin
     .from("what_next_readings")
@@ -138,15 +149,19 @@ export async function brainRefs(
     .eq("status", "done")
     .neq("scope", "suggest")
     .is("parent_id", null)
-    .not("read_ids", "is", null)
     .order("created_at", { ascending: false })
     .limit(WEB_BRAIN_MAX);
   if (error) throw new Error(error.message);
-  return (data || []).map((r) => ({
-    id: r.id,
-    title: readingTitle(r),
-    job: kindOf(r.scope, r.target),
-    at: r.created_at,
-    joins: joinsOf([...(r.read_ids ?? []), ...(r.elsewhere_ids ?? [])], ((r.extracts ?? []) as Extract[]).map((e) => e.id)),
-  }));
+  return (data || []).map((r) => {
+    const named = namedIn(r.reading ?? "", notes);
+    const quoted = [...new Set([...((r.extracts ?? []) as Extract[]).map((e) => e.id), ...named])];
+    return {
+      id: r.id,
+      title: readingTitle(r),
+      job: kindOf(r.scope, r.target),
+      at: r.created_at,
+      joins: r.read_ids ? joinsOf([...r.read_ids, ...(r.elsewhere_ids ?? [])], quoted) : named,
+      quoted,
+    };
+  });
 }
