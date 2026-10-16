@@ -212,6 +212,7 @@ ${R} .rounded-2xl { border-radius: var(--s-card); }
 ${R} .border { border: 1px solid var(--s-line); }
 ${R} .bg-card { background: var(--s-bg); }
 ${R} .fill-current { fill: currentColor; }
+${R} .fill-muted { fill: var(--s-soft); }
 ${R} .fill-primary { fill: var(--s-accent); }
 ${R} .fill-primary\/15 { fill: color-mix(in srgb, var(--s-accent) 15%, transparent); }
 ${R} .fill-primary\/30 { fill: color-mix(in srgb, var(--s-accent) 30%, transparent); }
