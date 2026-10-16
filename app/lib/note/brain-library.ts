@@ -8,7 +8,8 @@ import { type BrainRef, joinsOf } from "@/lib/note/walk-brain";
 
 /**
  * The Brain library: every reading the person has had, by what it is called
- * and what it was for. Free to read and worked out here, on rows the route
+ * and what it was for. A day's topic suggestions (`suggest`) share the table
+ * and are not readings: every read here leaves them out. Free to read and worked out here, on rows the route
  * already holds, so the list and each reading's page are one request each.
  */
 
@@ -102,6 +103,7 @@ export async function findReadings(
       .select("id, scope, target, created_at, title, notes, reading")
       .eq("user_id", userId)
       .eq("status", "done")
+      .neq("scope", "suggest")
       .is("parent_id", null)
       .ilike(column, pattern)
       .order("created_at", { ascending: false })
@@ -134,6 +136,7 @@ export async function brainRefs(
     .select("id, scope, target, created_at, title, reading, read_ids, elsewhere_ids, extracts")
     .eq("user_id", userId)
     .eq("status", "done")
+    .neq("scope", "suggest")
     .is("parent_id", null)
     .not("read_ids", "is", null)
     .order("created_at", { ascending: false })
