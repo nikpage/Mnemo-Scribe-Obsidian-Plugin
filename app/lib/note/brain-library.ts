@@ -1,5 +1,6 @@
 // [Guru]
 
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { quoteFound } from "@/lib/note/angle-filter";
 import { readingSections } from "@/lib/note/reading-sections";
 import { EVERYTHING, type Kind, type Narrow, type Scope, subjectOf } from "@/lib/note/what-next-target";
@@ -72,4 +73,45 @@ export function keptExtracts(extracts: Extract[], read: { id: string; text: stri
     if (kept.length === EXTRACTS_MAX) break;
   }
   return kept;
+}
+
+/** Brain outputs a search shows at most, in their own group under the notes. */
+export const SEARCH_MAX = 8;
+
+/** A typed query as a `like` pattern: its own `%`, `_` and `\\` matched as written. */
+export function likePattern(query: string): string {
+  return `%${query.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+}
+
+/**
+ * The Brain outputs whose title or text holds the query, newest first. Free,
+ * and never part of an answer: a search lists them for the person to open,
+ * apart from the notes, because they are the Brain's words, not theirs.
+ */
+export async function findReadings(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  admin: SupabaseClient<any, any, any>,
+  userId: string,
+  query: string
+): Promise<LibraryRow[]> {
+  const pattern = likePattern(query.trim());
+  const ask = (column: "title" | "reading") =>
+    admin
+      .from("what_next_readings")
+      .select("id, scope, target, created_at, title, notes, reading")
+      .eq("user_id", userId)
+      .eq("status", "done")
+      .is("parent_id", null)
+      .ilike(column, pattern)
+      .order("created_at", { ascending: false })
+      .limit(SEARCH_MAX);
+  const [byTitle, byText] = await Promise.all([ask("title"), ask("reading")]);
+  const seen = new Set<string>();
+  const rows: LibraryRow[] = [];
+  for (const r of [...(byTitle.data || []), ...(byText.data || [])]) {
+    if (seen.has(r.id)) continue;
+    seen.add(r.id);
+    rows.push({ id: r.id, scope: r.scope, target: r.target, created_at: r.created_at, title: readingTitle(r), notes: r.notes ?? 0 });
+  }
+  return rows.slice(0, SEARCH_MAX);
 }

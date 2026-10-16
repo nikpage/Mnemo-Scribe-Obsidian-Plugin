@@ -4,6 +4,7 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { api, useApi } from "@/lib/api";
 import type { Shelf } from "@/lib/note/shelf";
+import type { LibraryRow } from "@/lib/note/brain-library";
 
 export type SearchResult = {
   note: {
@@ -43,6 +44,8 @@ type Search = {
   /** More notes match by name or tag than are shown; `showMore` adds the next page of them. */
   more: boolean;
   showMore: () => void;
+  /** Brain outputs whose title or text holds the words: their own group, never a note. */
+  brain: LibraryRow[];
 };
 
 const Ctx = createContext<Search | null>(null);
@@ -67,7 +70,7 @@ export function searchParams(query: string, f: Filters): URLSearchParams {
 }
 
 /** What the server's typed search answers: notes matching by name or tag, then by the words inside. */
-type Typed = { results: SearchResult[]; names?: { results: SearchResult[]; more: boolean } };
+type Typed = { results: SearchResult[]; names?: { results: SearchResult[]; more: boolean }; brain?: LibraryRow[] };
 
 /**
  * One search for the whole app, with two boxes onto it.
@@ -121,6 +124,7 @@ export function SearchProvider({ children }: { children: React.ReactNode }) {
     return [...names, ...typed.results.filter((r) => r.note && !seen.has(r.note.id))];
   }, [typed]);
   const more = Boolean(typed?.names?.more);
+  const brain = useMemo(() => typed?.brain ?? [], [typed]);
 
   // A fuzzy run answers one query. The moment the query changes it is stale,
   // so what is on screen goes back to the words.
@@ -170,9 +174,10 @@ export function SearchProvider({ children }: { children: React.ReactNode }) {
       fuzzy,
       more,
       showMore: () => setNamed({ asking, pages: pages + 1 }),
+      brain,
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [query, results, searching, active, fuzzying, fuzzy, trimmed, key, more, asking, pages]
+    [query, results, searching, active, fuzzying, fuzzy, trimmed, key, more, asking, pages, brain]
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

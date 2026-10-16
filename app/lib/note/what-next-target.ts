@@ -27,6 +27,7 @@ export type Scope = (typeof SCOPES)[number];
  * `centre`, a note's id, is read first and always, whatever else narrows:
  * every other note is read for what it says about it. `alone` reads only these
  * notes: no notes from elsewhere are added by a link, a subject or a theme.
+ * `of`, a Brain output's id, reads only the notes that output read.
  */
 export interface Narrow {
   only: string[];
@@ -35,6 +36,7 @@ export interface Narrow {
   to: string;
   centre?: string;
   alone?: boolean;
+  of?: string;
 }
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -55,6 +57,7 @@ export function subjectTarget(kind: Kind, subject: string, narrow?: Partial<Narr
   if (narrow?.to && DATE.test(narrow.to)) p.set("to", narrow.to);
   if (narrow?.centre) p.set("centre", narrow.centre);
   if (narrow?.alone) p.set("alone", "1");
+  if (narrow?.of) p.set("of", narrow.of);
   const tail = p.toString();
   return tail ? `${head}\n${tail}` : head;
 }
@@ -71,7 +74,8 @@ export function subjectOf(target: string): { kind: Kind; subject: string; narrow
   const date = (key: string) => (DATE.test(p.get(key) || "") ? p.get(key)! : "");
   const centre = p.get("centre") || "";
   const alone = p.get("alone") === "1";
-  return { kind, subject, narrow: { only: list("only"), not: list("not"), from: date("from"), to: date("to"), ...(centre ? { centre } : {}), ...(alone ? { alone } : {}) } };
+  const of = p.get("of") || "";
+  return { kind, subject, narrow: { only: list("only"), not: list("not"), from: date("from"), to: date("to"), ...(centre ? { centre } : {}), ...(alone ? { alone } : {}), ...(of ? { of } : {}) } };
 }
 
 /**
@@ -113,10 +117,10 @@ export function readingOf(choice: Choice, centreTitle = ""): { scope: Scope; tar
   const topic = choice.topics.map((x) => x.replace(/\s+/g, " ").trim()).filter(Boolean).join(", ");
   const only = normalizeTags(narrow.only);
   const dated = Boolean(narrow.from || narrow.to);
-  const narrowed = only.length > 0 || normalizeTags(narrow.not).length > 0 || dated;
+  const narrowed = only.length > 0 || normalizeTags(narrow.not).length > 0 || dated || Boolean(narrow.of);
   if (kind === "picture" && !topic) {
     if (narrow.centre && !narrowed) return { scope: "item", target: narrow.centre };
-    if (!narrow.centre && !normalizeTags(narrow.not).length && !dated) {
+    if (!narrow.centre && !normalizeTags(narrow.not).length && !dated && !narrow.of) {
       return only.length ? { scope: "tags", target: [...only].sort().join(",") } : { scope: "overview", target: "" };
     }
   }
@@ -145,9 +149,17 @@ export function liveNarrow(narrow: Narrow, struck: string[]): Narrow {
  * tags, the struck ones among them still shown but struck, and only those
  * notes read (`alone`). Opened anywhere else, `struck` and `alone` are empty.
  */
-export function startOf(within: string[], opts: { struck?: string[]; alone?: boolean; centre?: string } = {}): { narrow: Narrow; struck: string[] } {
+export function startOf(within: string[], opts: { struck?: string[]; alone?: boolean; centre?: string; of?: string } = {}): { narrow: Narrow; struck: string[] } {
   const struck = normalizeTags(opts.struck || []).filter((tag) => !within.includes(tag));
-  const narrow: Narrow = { only: [...within, ...struck], not: [], from: "", to: "", ...(opts.centre ? { centre: opts.centre } : {}), ...(opts.alone ? { alone: true } : {}) };
+  const narrow: Narrow = {
+    only: [...within, ...struck],
+    not: [],
+    from: "",
+    to: "",
+    ...(opts.centre ? { centre: opts.centre } : {}),
+    ...(opts.alone ? { alone: true } : {}),
+    ...(opts.of ? { of: opts.of } : {}),
+  };
   return { narrow, struck };
 }
 

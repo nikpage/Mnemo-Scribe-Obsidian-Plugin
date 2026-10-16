@@ -14,7 +14,7 @@ import { api, useApi } from "@/lib/api";
 import type { FactHit } from "@/lib/note/fact-line";
 import { noteName, normalizeTags } from "@/lib/note/filing";
 import { NoteRow } from "@/components/note-row";
-import { SpentLine } from "@/components/what-next";
+import { BrainHits, SpentLine } from "@/components/what-next";
 
 type Spent = { costUsd: number; readTokens: number; wroteTokens: number };
 import { NoteShortcuts } from "@/components/note-shortcuts";
@@ -45,7 +45,7 @@ export function SearchPane() {
   // the sidebar — and a tag view's "Search these notes" narrows it by `tags`.
   const asked = params.get("q") || "";
   const within = normalizeTags((params.get("tags") || "").split(","));
-  const { query, setQuery, setFilters, results, searching, active, runFuzzy, fuzzying, fuzzy, more, showMore } = useSearch();
+  const { query, setQuery, setFilters, results, searching, active, runFuzzy, fuzzying, fuzzy, more, showMore, brain } = useSearch();
   const counts = useCounts().data;
 
   const [showFilters, setShowFilters] = useState(within.length > 0);
@@ -233,6 +233,7 @@ export function SearchPane() {
               {more && !fuzzy && <ShowMore onMore={showMore} />}
             </>
           )}
+          {!fuzzy && !where && brain.length > 0 && <BrainHits rows={brain} />}
 
           {/* The two paid ways further, after the free answer has been seen. */}
           {!where && (

@@ -214,6 +214,42 @@ export function ReadingProse({ text, more = [] }: { text: string; more?: { part:
   );
 }
 
+/** One Brain output read back by its id, free: its text with every Elaborate. */
+function ReadingById({ id }: { id: string }) {
+  const { data } = useApi<{ reading: { reading: string | null }; more: { part: string | null; reading: string | null }[] }>(`/api/notes/what-next?id=${encodeURIComponent(id)}`);
+  const text = data?.reading.reading;
+  return text ? <ReadingProse text={text} more={data.more} /> : null;
+}
+
+/**
+ * Brain outputs a search found, apart from the notes: the Brain's words, not
+ * the person's. Each opens in place, free, so the app and the plugins show it
+ * the same way.
+ */
+export function BrainHits({ rows }: { rows: LibraryRow[] }) {
+  const { lang, t } = useLang();
+  const [open, setOpen] = useState<string | null>(null);
+  return (
+    <section className="mt-4">
+      <h3 className="mb-2 text-sm font-semibold">{t("brainLibrary")}</h3>
+      <ul className="space-y-2">
+        {rows.map((r) => (
+          <li key={r.id}>
+            <Button variant="link" size="sm" className="text-left" aria-expanded={open === r.id} tip={t("tipBrainHit")} onClick={() => setOpen(open === r.id ? null : r.id)}>
+              {r.title || t(JOB_LABEL[kindOf(r.scope, r.target)])} · {t(JOB_LABEL[kindOf(r.scope, r.target)])} · {formatDate(r.created_at, lang)}
+            </Button>
+            {open === r.id && (
+              <div className="mt-2 border-l-2 border-border pl-3">
+                <ReadingById id={r.id} />
+              </div>
+            )}
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
 /** The press, its price inside it, and in words under it so a phone sees why. */
 function PressButton({ label, tip, primary, disabled, onPress, quote, why }: { label: string; tip: string; primary: boolean; disabled: boolean; onPress: () => void; quote?: Quote; why?: string }) {
   return (
@@ -264,13 +300,13 @@ export function WhatNext({ scope, target = "" }: { scope: "overview" | "tags" | 
  * on `centreId` when a note is open. The app's Brain panel and the plugins'
  * Brain tab are both this. Drawn once both are in.
  */
-export function BrainOf({ within, struck, alone, centreId }: { within?: string[]; struck?: string[]; alone?: boolean; centreId?: string }) {
+export function BrainOf({ within, struck, alone, centreId, of }: { within?: string[]; struck?: string[]; alone?: boolean; centreId?: string; of?: { id: string; title: string } }) {
   const counts = useCounts();
   const centre = useApi<{ recordings: { id: string; path: string }[] }>(centreId ? `/api/recordings?ids=${centreId}` : null);
   const tags = useMemo(() => tagsByUse(counts.data?.sets ?? []), [counts.data]);
   if (!allAnswered(counts, centreId ? centre : { data: null })) return null;
   const here = centre.data?.recordings[0];
-  return <BrainReading tags={tags} within={within} struck={struck} alone={alone} centre={here ? { id: here.id, title: here.path } : undefined} />;
+  return <BrainReading tags={tags} within={within} struck={struck} alone={alone} centre={here ? { id: here.id, title: here.path } : undefined} of={of} />;
 }
 
 /**
@@ -287,6 +323,7 @@ export function BrainReading({
   struck: struckAtStart,
   alone,
   centre,
+  of,
 }: {
   tags: string[];
   within?: string[];
@@ -295,11 +332,13 @@ export function BrainReading({
   /** Starts on "Only these notes". */
   alone?: boolean;
   centre?: { id: string; title: string };
+  /** Starts on the notes this Brain output read. */
+  of?: { id: string; title: string };
 }) {
   const { lang, t } = useLang();
   const [job, setJob] = useState<Kind>("picture");
   const [topics, setTopics] = useState<string[]>([]);
-  const [start] = useState(() => startOf(within, { struck: struckAtStart, alone, centre: centre?.id }));
+  const [start] = useState(() => startOf(within, { struck: struckAtStart, alone, centre: centre?.id, of: of?.id }));
   const [narrow, setNarrow] = useState<Narrow>(start.narrow);
   // Tags struck through: still shown, narrowing nothing, until they are tapped back or removed.
   const [struck, setStruck] = useState<string[]>(start.struck);
@@ -381,6 +420,11 @@ export function BrainReading({
               {t("brainCentre", { name: centre.title })}
             </Pill>
           )}
+          {of && narrow.of && (
+            <Pill onRemove={() => setNarrow({ ...narrow, of: undefined })} removeLabel={t("brainRemove")} tip={t("tipBrainOf")} removeTip={t("tipBrainRemove")}>
+              {t("brainOf", { name: of.title })}
+            </Pill>
+          )}
           {topics.map((topic) => (
             <Pill key={topic} onRemove={() => setTopics(topics.filter((x) => x !== topic))} removeLabel={t("brainRemove")} tip={t("tipBrainTopic")} removeTip={t("tipBrainRemove")}>
               {t("brainAbout", { name: topic })}
@@ -397,7 +441,7 @@ export function BrainReading({
               </Pill>
             )
           ))}
-          {topics.length === 0 && live.only.length + live.not.length === 0 && <span className="text-xs">{t("brainEverything")}</span>}
+          {topics.length === 0 && live.only.length + live.not.length === 0 && !narrow.of && <span className="text-xs">{t("brainEverything")}</span>}
           {when === "any" ? (
             <Chip on={open === "when"} aria-expanded={open === "when"} tip={t("tipBrainWhenOpen")} onClick={() => setOpen(open === "when" ? null : "when")}>
               {whenLabel}
