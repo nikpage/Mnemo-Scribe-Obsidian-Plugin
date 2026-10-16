@@ -89,6 +89,13 @@ function ticksFor(from: number, to: number, place: (ms: number) => number, spare
 /** Several anchors in one picture: their node ids and, for each node, the anchors whose walk holds it. */
 export type Anchoring = { ids: string[]; reach: Map<string, string[]> };
 
+/** Room for the list beside the picture, its width, and the gap between. */
+export const SIDE_MIN = 980;
+export const SIDE_W = 340;
+export const SIDE_GAP = 16;
+/** The width the picture gets in `room`: all of it, or what the list leaves. Measured before the picture exists, so it must match. */
+export const pictureWidth = (room: number) => (room >= SIDE_MIN ? room - SIDE_W - SIDE_GAP : room);
+
 export function layoutWalk(walk: Walk, width: number, height: number, anchoring?: Anchoring, ties?: Tie[]): Layout {
   const multi = !!anchoring && anchoring.ids.length > 1;
   // Several anchors are always bands one above the other (the first anchor on top), so time runs across at any width.

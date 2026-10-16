@@ -7,7 +7,7 @@ import { allAnswered, answered, api, useApi } from "@/lib/api";
 import { useLang } from "@/hooks/use-lang";
 import { formatDateShort, formatFactDate } from "@/lib/format";
 import { type Walk, type WalkEdge, type WalkNode, type WalkStore, WALK_STORE_URL, ALL_TAG, buildWalk, inputOf } from "@/lib/note/walk";
-import { type Layout, type Side, layoutWalk, markAt } from "@/lib/note/walk-layout";
+import { type Layout, type Side, SIDE_GAP, SIDE_MIN, SIDE_W, layoutWalk, markAt, pictureWidth } from "@/lib/note/walk-layout";
 import { type Share, type Picture, mergeWalks } from "@/lib/note/walk-set";
 import { CLUSTER_MIN_NODES, type Meaning, type Tie } from "@/lib/note/walk-clusters";
 import { meaningFrom } from "@/lib/note/walk-meaning";
@@ -71,9 +71,6 @@ const REST_MS = 90;
 const LET_GO_MS = 400;
 /** The box under the picture holds one fixed height, so what it says never moves the legend; long lists scroll inside it. */
 const STRIP_H = 176;
-/** Room for the list beside the picture. */
-const SIDE_MIN = 980;
-const SIDE_W = 340;
 
 function wantsStill(): boolean {
   try {
@@ -323,7 +320,7 @@ function WalkPanel({ anchorKey, struck: struckTags }: { anchorKey: string; struc
     return (
       <div ref={setOuter}>
         <h1 className="mb-2 text-2xl font-bold">{t("webTitle")}</h1>
-        {res.error || empty ? <Notice tone={empty || gone ? "info" : "error"}>{empty || gone ? t("webEmpty") : t("webFailed")}</Notice> : <div ref={setStage} className="w-full" />}
+        {res.error || empty ? <Notice tone={empty || gone ? "info" : "error"}>{empty || gone ? t("webEmpty") : t("webFailed")}</Notice> : <div ref={setStage} style={{ width: pictureWidth(room), border: "1px solid transparent" }} />}
       </div>
     );
   }
@@ -630,7 +627,7 @@ function WalkPanel({ anchorKey, struck: struckTags }: { anchorKey: string; struc
       </div>
 
       {beside ? (
-        <div style={{ display: "grid", gridTemplateColumns: `minmax(0, 1fr) ${SIDE_W}px`, gap: 16, alignItems: "start" }}>
+        <div style={{ display: "grid", gridTemplateColumns: `minmax(0, 1fr) ${SIDE_W}px`, gap: SIDE_GAP, alignItems: "start" }}>
           <div style={{ minWidth: 0 }}>{picture}</div>
           {/* The lists one above the other, sharing the picture's height, so the picture keeps the width. */}
           <div style={{ display: "flex", flexDirection: "column", gap: 12, minWidth: 0 }}>
