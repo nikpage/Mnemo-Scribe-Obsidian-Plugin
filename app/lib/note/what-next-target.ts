@@ -28,6 +28,8 @@ export type Scope = (typeof SCOPES)[number];
  * every other note is read for what it says about it. `alone` reads only these
  * notes: no notes from elsewhere are added by a link, a subject or a theme.
  * `of`, a Brain output's id, reads only the notes that output read.
+ * `pick`, the Web's trail, reads only those notes and the notes carrying
+ * those tags (or a tag beneath them).
  */
 export interface Narrow {
   only: string[];
@@ -37,6 +39,17 @@ export interface Narrow {
   centre?: string;
   alone?: boolean;
   of?: string;
+  pick?: Trail;
+}
+
+/** Notes by id and tags by name, read as one subset: a note is in it when it is named or carries a tag named. */
+export type Trail = { notes: string[]; tags: string[] };
+
+/** One spelling per trail: ids and tags sorted, none twice; null when it names nothing. */
+export function pickOf(raw: { notes?: string[]; tags?: string[] } | undefined): Trail | null {
+  const notes = [...new Set((raw?.notes ?? []).map((id) => id.trim()).filter(Boolean))].sort();
+  const tags = normalizeTags(raw?.tags ?? []).sort();
+  return notes.length || tags.length ? { notes, tags } : null;
 }
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -58,6 +71,9 @@ export function subjectTarget(kind: Kind, subject: string, narrow?: Partial<Narr
   if (narrow?.centre) p.set("centre", narrow.centre);
   if (narrow?.alone) p.set("alone", "1");
   if (narrow?.of) p.set("of", narrow.of);
+  const pick = pickOf(narrow?.pick);
+  if (pick?.notes.length) p.set("notes", pick.notes.join(","));
+  if (pick?.tags.length) p.set("any", pick.tags.join(","));
   const tail = p.toString();
   return tail ? `${head}\n${tail}` : head;
 }
@@ -75,7 +91,8 @@ export function subjectOf(target: string): { kind: Kind; subject: string; narrow
   const centre = p.get("centre") || "";
   const alone = p.get("alone") === "1";
   const of = p.get("of") || "";
-  return { kind, subject, narrow: { only: list("only"), not: list("not"), from: date("from"), to: date("to"), ...(centre ? { centre } : {}), ...(alone ? { alone } : {}), ...(of ? { of } : {}) } };
+  const pick = pickOf({ notes: (p.get("notes") || "").split(","), tags: list("any") });
+  return { kind, subject, narrow: { only: list("only"), not: list("not"), from: date("from"), to: date("to"), ...(centre ? { centre } : {}), ...(alone ? { alone } : {}), ...(of ? { of } : {}), ...(pick ? { pick } : {}) } };
 }
 
 /**
@@ -117,10 +134,11 @@ export function readingOf(choice: Choice, centreTitle = ""): { scope: Scope; tar
   const topic = choice.topics.map((x) => x.replace(/\s+/g, " ").trim()).filter(Boolean).join(", ");
   const only = normalizeTags(narrow.only);
   const dated = Boolean(narrow.from || narrow.to);
-  const narrowed = only.length > 0 || normalizeTags(narrow.not).length > 0 || dated || Boolean(narrow.of);
+  const picked = Boolean(pickOf(narrow.pick));
+  const narrowed = only.length > 0 || normalizeTags(narrow.not).length > 0 || dated || Boolean(narrow.of) || picked;
   if (kind === "picture" && !topic) {
     if (narrow.centre && !narrowed) return { scope: "item", target: narrow.centre };
-    if (!narrow.centre && !normalizeTags(narrow.not).length && !dated && !narrow.of) {
+    if (!narrow.centre && !normalizeTags(narrow.not).length && !dated && !narrow.of && !picked) {
       return only.length ? { scope: "tags", target: [...only].sort().join(",") } : { scope: "overview", target: "" };
     }
   }
@@ -149,7 +167,7 @@ export function liveNarrow(narrow: Narrow, struck: string[]): Narrow {
  * tags, the struck ones among them still shown but struck, and only those
  * notes read (`alone`). Opened anywhere else, `struck` and `alone` are empty.
  */
-export function startOf(within: string[], opts: { struck?: string[]; alone?: boolean; centre?: string; of?: string } = {}): { narrow: Narrow; struck: string[] } {
+export function startOf(within: string[], opts: { struck?: string[]; alone?: boolean; centre?: string; of?: string; pick?: Trail } = {}): { narrow: Narrow; struck: string[] } {
   const struck = normalizeTags(opts.struck || []).filter((tag) => !within.includes(tag));
   const narrow: Narrow = {
     only: [...within, ...struck],
@@ -159,6 +177,7 @@ export function startOf(within: string[], opts: { struck?: string[]; alone?: boo
     ...(opts.centre ? { centre: opts.centre } : {}),
     ...(opts.alone ? { alone: true } : {}),
     ...(opts.of ? { of: opts.of } : {}),
+    ...(pickOf(opts.pick) ? { pick: pickOf(opts.pick)! } : {}),
   };
   return { narrow, struck };
 }

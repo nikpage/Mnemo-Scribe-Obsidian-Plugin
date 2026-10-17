@@ -1,4 +1,5 @@
 // [Librarian]
+import { X } from "lucide-react";
 import type { useLang } from "@/hooks/use-lang";
 import { formatDateShort } from "@/lib/format";
 import type { WalkNode } from "@/lib/note/walk";
@@ -34,12 +35,14 @@ export function ShareMark({ share, word }: { share: Share; word: string }) {
 
 /**
  * The walk as a list, nearest first, in the picture's colours. A row lights its
- * bubble and, pressed, walks there. A node that touches several nearer ones
- * is opened under one and shown again, shut, under the others.
+ * bubble and, pressed, joins the trail (`chosen`) as a tag joins the set in the
+ * left list: marked in the centre colour with its ×, pressed again it leaves.
+ * A node that touches several nearer ones is opened under one and shown again,
+ * shut, under the others.
  * A row carries no tip (`tips-check.mjs`): the box under the picture already says
  * what the lit thing is and why, and a tip here covered the picture.
  */
-export function WalkList({ rows, height, lit, struck, centre, shares, words, onPoint, onLeave, onGo, t, lang }: { rows: Row[]; height: number; shares: ReadonlyMap<string, Share>; words: Record<Share, string>; struck: ReadonlySet<string>; lit: Set<string> | null; centre: string; onPoint: (id: string) => void; onLeave: () => void; onGo: (n: WalkNode) => void; t: T; lang: Lang }) {
+export function WalkList({ rows, height, lit, struck, centre, chosen, shares, words, onPoint, onLeave, onTap, t, lang }: { rows: Row[]; height: number; shares: ReadonlyMap<string, Share>; words: Record<Share, string>; struck: ReadonlySet<string>; lit: Set<string> | null; centre: string; chosen: ReadonlySet<string>; onPoint: (id: string) => void; onLeave: () => void; onTap: (n: WalkNode) => void; t: T; lang: Lang }) {
   return (
     <div className="overflow-y-auto rounded-2xl border border-border bg-card" style={{ maxHeight: height }} onPointerLeave={onLeave}>
       {rows.map((r, i) => {
@@ -47,6 +50,7 @@ export function WalkList({ rows, height, lit, struck, centre, shares, words, onP
         const tag = n.kind === "tag";
         const on = !!lit && lit.has(n.id);
         const colour = levelColour(r.level);
+        const picked = chosen.has(n.id);
         return (
           <div
             key={`${n.id}:${i}`}
@@ -57,17 +61,18 @@ export function WalkList({ rows, height, lit, struck, centre, shares, words, onP
             style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", padding: "7px 10px", marginLeft: 6 + r.depth * 14, borderLeft: `${LEVEL_WIDTH[r.level]}px solid ${colour}`, opacity: r.again ? 0.6 : 1 }}
             onPointerEnter={(ev) => ev.pointerType !== "touch" && onPoint(n.id)}
             onFocus={() => onPoint(n.id)}
-            onClick={() => n.id !== centre && onGo(n)}
-            onKeyDown={(ev) => ev.key === "Enter" && n.id !== centre && onGo(n)}
+            onClick={() => onTap(n)}
+            onKeyDown={(ev) => ev.key === "Enter" && onTap(n)}
           >
             <span aria-hidden style={{ flex: "none", width: 10, height: 10, borderRadius: "50%", boxSizing: "border-box", border: `2px solid ${colour}`, background: tag ? "transparent" : colour }} />
-            <span className="truncate text-sm" style={{ flex: 1, minWidth: 0, fontWeight: n.id === centre || tag ? 600 : 400, textDecoration: isStruck(n, struck) ? "line-through" : undefined }}>
+            <span className="truncate text-sm" style={{ flex: 1, minWidth: 0, fontWeight: n.id === centre || tag || picked ? 600 : 400, color: picked ? levelColour(1) : undefined, textDecoration: isStruck(n, struck) ? "line-through" : undefined }}>
               {nameOf(n)}
             </span>
             {shares.get(n.id) && <ShareMark share={shares.get(n.id)!} word={words[shares.get(n.id)!]} />}
             <span className="text-xs text-muted-foreground" style={{ flex: "none" }}>
               {tag ? t("webNotes", { n: n.count }) : formatDateShort(n.at, lang)}
             </span>
+            {picked && <X className="h-3.5 w-3.5" style={{ flex: "none", color: levelColour(1) }} aria-hidden />}
           </div>
         );
       })}

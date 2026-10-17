@@ -3,10 +3,10 @@
 // [Librarian, Guru]
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import useSWR, { preload } from "swr";
-import { allAnswered, answered, api, useApi } from "@/lib/api";
+import { allAnswered, answered, answeredNow, api, useApi } from "@/lib/api";
 import { useLang } from "@/hooks/use-lang";
 import { formatDateShort, formatFactDate } from "@/lib/format";
-import { type Walk, type WalkEdge, type WalkNode, type WalkStore, WALK_STORE_URL, ALL_TAG, buildWalk, inputOf } from "@/lib/note/walk";
+import { type Walk, type WalkEdge, type WalkNode, type WalkStore, WALK_STORE_URL, ALL_TAG, buildWalk, inputOf, oneStep } from "@/lib/note/walk";
 import { type Layout, type Side, SIDE_GAP, SIDE_MIN, SIDE_W, layoutWalk, markAt, pictureWidth } from "@/lib/note/walk-layout";
 import { type Share, type Picture, mergeWalks } from "@/lib/note/walk-set";
 import { CLUSTER_MIN_NODES, type Meaning, type Tie } from "@/lib/note/walk-clusters";
@@ -15,12 +15,12 @@ import { LEVEL_WIDTH, type Row, connectionsOf, drawOrder, isStruck, levelColour,
 import { ShareGlyph, ShareMark, WalkList } from "@/components/walk-list";
 import { NoteLink } from "@/components/note-link";
 import { PHRASE } from "@/components/note-links";
-import { Button, Notice } from "@/components/ui";
+import { Button, Cost, Notice, Pill } from "@/components/ui";
 import { showPicture } from "@/lib/note/web-picture";
 import type { WebSet } from "@/lib/note/web-set";
 import { BRAIN_VIEWS, type BrainView, brainOnly, withBrain } from "@/lib/note/walk-brain";
-import type { Kind } from "@/lib/note/what-next-target";
-import { JOB_LABEL, ReadingById } from "@/components/what-next";
+import { type Kind, pickOf, readingOf } from "@/lib/note/what-next-target";
+import { BrainOf, JOB_LABEL, type Quote, ReadingById, quoteUrl } from "@/components/what-next";
 
 /**
  * The walk (`lib/note/walk.ts`): the notes a few steps out from one tag or
@@ -87,6 +87,8 @@ const REST_MS = 90;
 const LET_GO_MS = 400;
 /** The box under the picture holds one fixed height, so what it says never moves the legend; long lists scroll inside it. */
 const STRIP_H = 176;
+/** Past this share of the Brain's aim the trail is near its limit; past the whole aim the Brain reads passages chosen from it. */
+const NEAR = 0.8;
 
 function wantsStill(): boolean {
   try {
@@ -175,7 +177,11 @@ export function WebView({ set }: { set?: WebSet }) {
   return <WalkPanel anchorKey={(set?.live ?? []).join(",")} struck={set?.struck ?? NO_TAGS} />;
 }
 
-/** The picture of a set's anchors, or of the usual centre; a walk taken since goes where it was taken, and Back returns. */
+/**
+ * The picture of a set's anchors, or of the usual centre; a walk taken since goes where it was taken, and Back returns.
+ * The list's rows make the trail: the notes and tags pressed, kept across walks, each lit with what one step reaches.
+ * "View this map" draws only the trail, each a centre with what one step reaches; "Use" opens the Brain on exactly it.
+ */
 function WalkPanel({ anchorKey, struck: struckTags }: { anchorKey: string; struck: string[] }) {
   const { t, lang } = useLang();
   setAllLabel(t("walkAll"));
@@ -185,7 +191,11 @@ function WalkPanel({ anchorKey, struck: struckTags }: { anchorKey: string; struc
   const [picked, setPicked] = useState<string | null>(null);
   // The bubble just chosen, marked at once while its walk is on the way.
   const [chosen, setChosen] = useState<string | null>(null);
-  const [trail, setTrail] = useState<{ at: Where | null; name: string }[]>([]);
+  const [trail, setTrail] = useState<{ at: Where | null; map: Where[] | null; name: string }[]>([]);
+  // The trail, in the order pressed, and whether the picture is of it alone and the Brain open on it.
+  const [picks, setPicks] = useState<Walkable[]>([]);
+  const [map, setMap] = useState<Where[] | null>(null);
+  const [using, setUsing] = useState(false);
   const [seen, setSeen] = useState(anchorKey);
   // Brain outputs: none, with the notes, or in their place; one function or any; the one opened under the picture.
   const [view, setView] = useState<BrainView>("off");
@@ -195,6 +205,7 @@ function WalkPanel({ anchorKey, struck: struckTags }: { anchorKey: string; struc
   if (seen !== anchorKey) {
     setSeen(anchorKey);
     setAt(null);
+    setMap(null);
     setTrail([]);
     setChosen(null);
     setPicked(null);
@@ -213,24 +224,25 @@ function WalkPanel({ anchorKey, struck: struckTags }: { anchorKey: string; struc
   }
   const store = { data: held, error: live.error };
   const serverMode = store.data?.more === true;
-  const starts: Where[] = at ? [at] : anchors.map((tag) => ({ tag }));
+  const starts: Where[] = useMemo(() => map ?? (at ? [at] : anchors.map((tag) => ({ tag }))), [map, at, anchors]);
   const asked = starts.length ? starts.map(url) : [url(null)];
   const remote = useSWR<Walk[]>(serverMode ? walksKey(asked) : null, fetchWalks, { keepPreviousData: true, revalidateOnFocus: false, revalidateOnReconnect: false });
   const input = useMemo(() => (store.data && !store.data.more ? inputOf(store.data) : null), [store.data]);
   const brain = useMemo(() => store.data?.brain ?? [], [store.data]);
+  // The trail's map keeps each centre and what one step reaches.
+  const cut = useMemo(() => (map ? oneStep : (w: Walk) => w), [map]);
   const here = useMemo(() => {
     if (!input) return null;
-    const from: Where[] = at ? [at] : anchors.map((tag) => ({ tag }));
     // A set's tag no note carries any more is left out; with none left the picture is of every note.
-    let walks = from.map((c) => buildWalk(input, c)).filter((w): w is Walk => !!w);
+    let walks = starts.map((c) => buildWalk(input, c)).filter((w): w is Walk => !!w);
     if (!walks.length) {
       const w = buildWalk(input, { tag: ALL_TAG });
       walks = w ? [w] : [];
     }
-    return walks.length ? mergeWalks(walks.map((w) => withBrain(w, brain, view, job))) : null;
-  }, [input, at, anchors, brain, view, job]);
+    return walks.length ? mergeWalks(walks.map((w) => withBrain(cut(w), brain, view, job))) : null;
+  }, [input, starts, cut, brain, view, job]);
   const res = serverMode ? remote : store;
-  const wanted = useMemo(() => (serverMode ? (remote.data?.length ? mergeWalks(remote.data.map((w) => withBrain(w, brain, view, job))) : null) : here), [serverMode, remote.data, here, brain, view, job]);
+  const wanted = useMemo(() => (serverMode ? (remote.data?.length ? mergeWalks(remote.data.map((w) => withBrain(cut(w), brain, view, job))) : null) : here), [serverMode, remote.data, here, cut, brain, view, job]);
   // Which notes read alike is part of how the picture is laid out, so a picture is drawn only once that has
   // answered (or failed, when it is drawn without), and the one before stays until then: nothing lands late and moves it.
   const asking = serverMode && wanted ? meaningUrlOf(wanted.walk, wanted.anchors.length > 1) : null;
@@ -315,19 +327,29 @@ function WalkPanel({ anchorKey, struck: struckTags }: { anchorKey: string; struc
   };
   useEffect(() => cancelAim, []);
 
-  // What is lit: the bubble pointed at and what touches it. Something that is not in this picture lights nothing.
+  // What is lit: the bubble pointed at and what touches it, else the trail and what touches it.
+  // Something that is not in this picture lights nothing.
   const lit = useMemo(() => {
-    const id = hover ?? picked;
-    if (!id || !walk || !walk.nodes.some((n) => n.id === id)) return null;
-    const nodes = new Set<string>([id]);
+    if (!walk) return null;
+    const pointed = hover ?? picked;
+    const ids = (pointed ? [pointed] : picks.map((p) => p.id)).filter((id) => walk.nodes.some((n) => n.id === id));
+    if (!ids.length) return null;
+    const from = new Set(ids);
+    const nodes = new Set<string>(ids);
     const edges = new Set<string>();
     for (const x of walk.edges) {
-      if (x.a !== id && x.b !== id) continue;
+      if (!from.has(x.a) && !from.has(x.b)) continue;
       edges.add(x.id);
       nodes.add(x.a).add(x.b);
     }
-    return { id, nodes, edges };
-  }, [hover, picked, walk]);
+    return { id: ids[ids.length - 1], nodes, edges };
+  }, [hover, picked, picks, walk]);
+
+  // The trail as the Brain reads it, and its price: free to ask, the Brain reads exactly these.
+  const pick = useMemo(() => pickOf({ notes: picks.flatMap((p) => (p.kind === "note" ? [p.note.id] : [])), tags: picks.flatMap((p) => (p.kind === "tag" ? [p.name] : [])) }), [picks]);
+  const priced = pick ? readingOf({ kind: "picture", topics: [], narrow: { only: [], not: [], from: "", to: "", alone: true, pick } }) : null;
+  const quote = useApi<Quote>(priced ? quoteUrl(priced.scope, priced.target) : null, { keepPreviousData: true });
+  const price = answeredNow(quote);
 
   if (lit && lit.id !== kept) setKept(lit.id);
 
@@ -362,8 +384,9 @@ function WalkPanel({ anchorKey, struck: struckTags }: { anchorKey: string; struc
       return;
     }
     if (node.id === walk.centre) return;
-    setTrail((tr) => [...tr, { at, name: heading }]);
+    setTrail((tr) => [...tr, { at, map, name: heading }]);
     setAt(whereOf(node));
+    setMap(null);
     cancelAim();
     setHover(null);
     setPicked(null);
@@ -375,12 +398,33 @@ function WalkPanel({ anchorKey, struck: struckTags }: { anchorKey: string; struc
     if (!last) return;
     setTrail((tr) => tr.slice(0, -1));
     setAt(last.at);
+    setMap(last.map);
     cancelAim();
     setHover(null);
     setPicked(null);
     setKept(null);
     setChosen(null);
   };
+  // A list row: a Brain output opens as its bubble does; anything else joins the trail, or leaves it.
+  const tap = (node: WalkNode) => {
+    if (node.kind === "brain") return go(node);
+    if (node.kind === "tag" && node.name === ALL_TAG) return;
+    setPicks((ps) => (ps.some((p) => p.id === node.id) ? ps.filter((p) => p.id !== node.id) : [...ps, node]));
+    setHover(null);
+    setPicked(null);
+  };
+  const unpick = (id: string) => setPicks((ps) => ps.filter((p) => p.id !== id));
+  const viewMap = () => {
+    setTrail((tr) => [...tr, { at, map, name: heading }]);
+    setMap(picks.map(whereOf));
+    setAt(null);
+    cancelAim();
+    setHover(null);
+    setPicked(null);
+    setKept(null);
+    setChosen(null);
+  };
+  const chosenIds = new Set(picks.map((p) => p.id));
 
   const pos = (d: Drawn) => {
     const a = d.mode === "leave" ? 1 - e : d.mode === "enter" ? e : 1;
@@ -405,7 +449,7 @@ function WalkPanel({ anchorKey, struck: struckTags }: { anchorKey: string; struc
     setHover(id);
   };
 
-  const column = { multi, height, struck, lit: lit?.nodes ?? null, shares, words, onPoint: point, onLeave: () => aim(null, LET_GO_MS), t, lang };
+  const column = { multi, height, struck, lit: lit?.nodes ?? null, chosen: chosenIds, shares, words, onPoint: point, onLeave: () => aim(null, LET_GO_MS), t, lang };
 
   const picture = (
     <>
@@ -433,6 +477,7 @@ function WalkPanel({ anchorKey, struck: struckTags }: { anchorKey: string; struc
                 if (trail.length) {
                   setTrail([]);
                   setAt(null);
+                  setMap(null);
                   setChosen(null);
                   cancelAim();
                   setHover(null);
@@ -695,6 +740,36 @@ function WalkPanel({ anchorKey, struck: struckTags }: { anchorKey: string; struc
 
   return (
     <div ref={setOuter}>
+      {picks.length > 0 && (
+        <div className="mb-2 flex flex-wrap items-center gap-2">
+          {picks.map((p, i) => (
+            <span key={p.id} className="inline-flex items-center gap-2">
+              {i > 0 && <span aria-hidden className="text-muted-foreground">›</span>}
+              <Pill onRemove={() => unpick(p.id)} removeLabel={t("brainRemove")} tip={t("tipWalkTrailItem")} removeTip={t("tipWalkTrailRemove")}>
+                {nameOf(p)}
+              </Pill>
+            </span>
+          ))}
+          <Button size="sm" variant="secondary" tip={t("tipWalkTrailMap")} onClick={viewMap}>
+            {t("walkTrailMap")}
+          </Button>
+          <TrailFill fill={price?.fill} t={t} />
+          <Button size="sm" variant="primary" tip={t("tipWalkTrailUse")} aria-expanded={using} onClick={() => setUsing(!using)}>
+            {t("walkTrailUse")}
+            <Cost credits={price?.credits} why={price?.credits != null ? t("costReading", { n: price.credits, notes: price.notes ?? 0, balance: price.balance ?? 0 }) : undefined} />
+          </Button>
+        </div>
+      )}
+      {using && pick && (
+        <section className="mb-3 rounded-2xl border border-border bg-card p-3">
+          <div className="mb-2">
+            <Button size="sm" variant="secondary" tip={t("tipWalkTrailClose")} onClick={() => setUsing(false)}>
+              {t("walkBrainClose")}
+            </Button>
+          </div>
+          <BrainOf key={priced?.target} pick={pick} alone />
+        </section>
+      )}
       <div className="mb-3 flex flex-wrap items-center gap-3">
         {trail.length > 0 && (
           <Button size="sm" variant="secondary" tip={trail[trail.length - 1].name} onClick={back}>
@@ -724,7 +799,7 @@ function WalkPanel({ anchorKey, struck: struckTags }: { anchorKey: string; struc
           {/* The lists one above the other, sharing the picture's height, so the picture keeps the width. */}
           <div style={{ display: "flex", flexDirection: "column", gap: 12, minWidth: 0 }}>
             {lists.map((l) => (
-              <ListColumn key={l.walk.centre} list={l} onGo={go} {...column} height={Math.max(120, Math.floor((height - (lists.length - 1) * 12 - (multi ? lists.length * 26 : 0)) / lists.length))} />
+              <ListColumn key={l.walk.centre} list={l} onTap={tap} {...column} height={Math.max(120, Math.floor((height - (lists.length - 1) * 12 - (multi ? lists.length * 26 : 0)) / lists.length))} />
             ))}
           </div>
         </div>
@@ -748,14 +823,7 @@ function WalkPanel({ anchorKey, struck: struckTags }: { anchorKey: string; struc
             <div style={{ flex: "0 0 100%", minWidth: 0, scrollSnapAlign: "start" }}>{picture}</div>
             {lists.map((l) => (
               <div key={l.walk.centre} style={{ flex: "0 0 100%", minWidth: 0, scrollSnapAlign: "start" }}>
-                <ListColumn
-                  list={l}
-                  onGo={(n) => {
-                    showPage(0);
-                    go(n);
-                  }}
-                  {...column}
-                />
+                <ListColumn list={l} onTap={tap} {...column} />
               </div>
             ))}
           </div>
@@ -766,7 +834,7 @@ function WalkPanel({ anchorKey, struck: struckTags }: { anchorKey: string; struc
 }
 
 /** One anchor's list, titled with the anchor when the picture holds several. */
-function ListColumn({ list, multi, height, struck, lit, shares, words, onPoint, onLeave, onGo, t, lang }: { list: { walk: Walk; rows: Row[]; name: string }; multi: boolean; height: number; struck: ReadonlySet<string>; lit: Set<string> | null; shares: ReadonlyMap<string, Share>; words: Record<Share, string>; onPoint: (id: string) => void; onLeave: () => void; onGo: (n: WalkNode) => void; t: T; lang: Lang }) {
+function ListColumn({ list, multi, height, struck, lit, chosen, shares, words, onPoint, onLeave, onTap, t, lang }: { list: { walk: Walk; rows: Row[]; name: string }; multi: boolean; height: number; struck: ReadonlySet<string>; lit: Set<string> | null; chosen: ReadonlySet<string>; shares: ReadonlyMap<string, Share>; words: Record<Share, string>; onPoint: (id: string) => void; onLeave: () => void; onTap: (n: WalkNode) => void; t: T; lang: Lang }) {
   return (
     <div style={{ minWidth: 0 }}>
       {multi && (
@@ -774,8 +842,24 @@ function ListColumn({ list, multi, height, struck, lit, shares, words, onPoint, 
           {list.name}
         </p>
       )}
-      <WalkList rows={list.rows} height={height} struck={struck} lit={lit} centre={list.walk.centre} shares={shares} words={words} onPoint={onPoint} onLeave={onLeave} onGo={onGo} t={t} lang={lang} />
+      <WalkList rows={list.rows} height={height} struck={struck} lit={lit} centre={list.walk.centre} chosen={chosen} shares={shares} words={words} onPoint={onPoint} onLeave={onLeave} onTap={onTap} t={t} lang={lang} />
     </div>
+  );
+}
+
+const FILL_LABEL = { under: "walkFillUnder", near: "walkFillNear", over: "walkFillOver" } as const;
+const FILL_DOT = { under: "bg-success", near: "bg-warning", over: "bg-destructive" } as const;
+
+/** How full the Brain's aim is with the trail: all read, near the limit, or over it (passages chosen). Its slot is held while it is priced. */
+function TrailFill({ fill, t }: { fill: number | undefined; t: T }) {
+  const state = fill == null ? null : fill <= NEAR ? "under" : fill <= 1 ? "near" : "over";
+  const shown = state ?? "under";
+  const dot = FILL_DOT[shown];
+  return (
+    <span data-tip={t("tipWalkTrailFill")} className={`inline-flex items-center gap-1 text-xs text-muted-foreground ${state ? "" : "invisible"}`}>
+      <span aria-hidden className={dot} style={{ display: "inline-block", width: 8, height: 8, borderRadius: "50%" }} />
+      {t(FILL_LABEL[shown])}
+    </span>
   );
 }
 

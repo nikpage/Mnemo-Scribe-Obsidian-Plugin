@@ -62,3 +62,15 @@ export function rememberWebSet(query: string): void {
     // Private window or blocked storage: the set still lives in the address.
   }
 }
+
+/**
+ * A set chosen in the Web, changed where it is: the address moves and the page redraws from it (Next keeps
+ * `useSearchParams` in step with `history`), asking the server nothing. Followed as a link, every new set was
+ * an address never seen before, fetched from the server for seconds before the picture moved. A click with a
+ * key held (a new tab, a new window) stays a link.
+ */
+export function goInPlace(ev: { preventDefault(): void; metaKey: boolean; ctrlKey: boolean; shiftKey: boolean; altKey: boolean; button: number }, href: string): void {
+  if (ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey || ev.button !== 0) return;
+  ev.preventDefault();
+  window.history.pushState(null, "", href);
+}

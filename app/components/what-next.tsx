@@ -9,7 +9,7 @@ import { busyUntilDone } from "@/lib/busy";
 import { useLang } from "@/hooks/use-lang";
 import { formatDate, formatFactDate, formatUsd } from "@/lib/format";
 import { inlineMarks, readingSections } from "@/lib/note/reading-sections";
-import { EVERYTHING, type Kind, type Narrow, type Scope, dropTag, flipTag, liveNarrow, monthsBefore, readingOf, startOf, subjectOf } from "@/lib/note/what-next-target";
+import { EVERYTHING, type Kind, type Narrow, type Scope, type Trail, dropTag, flipTag, liveNarrow, monthsBefore, readingOf, startOf, subjectOf } from "@/lib/note/what-next-target";
 import { type LibraryRow, kindOf } from "@/lib/note/brain-library";
 import { Plus } from "lucide-react";
 import { tipOf } from "@/lib/tooltip";
@@ -21,7 +21,7 @@ type Status = "running" | "done" | "failed";
 type Spent = { costUsd: number; readTokens: number; wroteTokens: number };
 type Row = { id: string; target: string; part: string | null; status: Status; reading: string | null; created_at: string; spent?: Spent };
 type Answer = { reading: Row | null; failed: "failed" | "declined" | null; more: Row[] };
-type Quote = { credits: number | null; balance: number | null; notes?: number };
+export type Quote = { credits: number | null; balance: number | null; notes?: number; fill?: number };
 type Suggestion = { label: string; subject: string; jobs: Kind[] };
 
 /** The jobs in the order they are offered, each named by what the person is about to do. */
@@ -40,7 +40,7 @@ const WHEN_MONTHS = { any: 0, month: 1, "3m": 3, year: 12, pick: 0 } as const;
 /** The newest readings the Brain panel names; the rest are in the Brain library. */
 const LATEST = 10;
 
-const quoteUrl = (scope: Scope, target: string, parentId?: string) =>
+export const quoteUrl = (scope: Scope, target: string, parentId?: string) =>
   `/api/notes/what-next/quote?scope=${scope}&target=${encodeURIComponent(target)}${parentId ? `&parentId=${parentId}` : ""}`;
 
 /** What a reading really cost, under it; only the owner's account is ever sent one. */
@@ -300,13 +300,13 @@ export function WhatNext({ scope, target = "" }: { scope: "overview" | "tags" | 
  * on `centreId` when a note is open. The app's Brain panel and the plugins'
  * Brain tab are both this. Drawn once both are in.
  */
-export function BrainOf({ within, struck, alone, centreId, of }: { within?: string[]; struck?: string[]; alone?: boolean; centreId?: string; of?: { id: string; title: string } }) {
+export function BrainOf({ within, struck, alone, centreId, of, pick }: { within?: string[]; struck?: string[]; alone?: boolean; centreId?: string; of?: { id: string; title: string }; pick?: Trail }) {
   const counts = useCounts();
   const centre = useApi<{ recordings: { id: string; path: string }[] }>(centreId ? `/api/recordings?ids=${centreId}` : null);
   const tags = useMemo(() => tagsByUse(counts.data?.sets ?? []), [counts.data]);
   if (!allAnswered(counts, centreId ? centre : { data: null })) return null;
   const here = centre.data?.recordings[0];
-  return <BrainReading tags={tags} within={within} struck={struck} alone={alone} centre={here ? { id: here.id, title: here.path } : undefined} of={of} />;
+  return <BrainReading tags={tags} within={within} struck={struck} alone={alone} centre={here ? { id: here.id, title: here.path } : undefined} of={of} pick={pick} />;
 }
 
 /**
@@ -324,6 +324,7 @@ export function BrainReading({
   alone,
   centre,
   of,
+  pick,
 }: {
   tags: string[];
   within?: string[];
@@ -334,11 +335,13 @@ export function BrainReading({
   centre?: { id: string; title: string };
   /** Starts on the notes this Brain output read. */
   of?: { id: string; title: string };
+  /** Starts on the Web's trail: those notes and the notes carrying those tags. */
+  pick?: Trail;
 }) {
   const { lang, t } = useLang();
   const [job, setJob] = useState<Kind>("picture");
   const [topics, setTopics] = useState<string[]>([]);
-  const [start] = useState(() => startOf(within, { struck: struckAtStart, alone, centre: centre?.id, of: of?.id }));
+  const [start] = useState(() => startOf(within, { struck: struckAtStart, alone, centre: centre?.id, of: of?.id, pick }));
   const [narrow, setNarrow] = useState<Narrow>(start.narrow);
   // Tags struck through: still shown, narrowing nothing, until they are tapped back or removed.
   const [struck, setStruck] = useState<string[]>(start.struck);
@@ -425,6 +428,11 @@ export function BrainReading({
               {t("brainOf", { name: of.title })}
             </Pill>
           )}
+          {narrow.pick && (
+            <Pill onRemove={() => setNarrow({ ...narrow, pick: undefined })} removeLabel={t("brainRemove")} tip={t("tipBrainTrail")} removeTip={t("tipBrainRemove")}>
+              {t("brainTrail", { n: narrow.pick.notes.length + narrow.pick.tags.length })}
+            </Pill>
+          )}
           {topics.map((topic) => (
             <Pill key={topic} onRemove={() => setTopics(topics.filter((x) => x !== topic))} removeLabel={t("brainRemove")} tip={t("tipBrainTopic")} removeTip={t("tipBrainRemove")}>
               {t("brainAbout", { name: topic })}
@@ -441,7 +449,7 @@ export function BrainReading({
               </Pill>
             )
           ))}
-          {topics.length === 0 && live.only.length + live.not.length === 0 && !narrow.of && <span className="text-xs">{t("brainEverything")}</span>}
+          {topics.length === 0 && live.only.length + live.not.length === 0 && !narrow.of && !narrow.pick && <span className="text-xs">{t("brainEverything")}</span>}
           {when === "any" ? (
             <Chip on={open === "when"} aria-expanded={open === "when"} tip={t("tipBrainWhenOpen")} onClick={() => setOpen(open === "when" ? null : "when")}>
               {whenLabel}

@@ -214,6 +214,12 @@ export function capNotes(walk: Walk, max: number): Walk {
   return { centre: walk.centre, nodes: walk.nodes.filter((n) => kept.has(n.id) && reached.has(n.id)), edges: edges.filter((e) => reached.has(e.a) && reached.has(e.b)) };
 }
 
+/** A walk cut to its centre and what one step reaches: each anchor of the Web's "View this map". */
+export function oneStep(walk: Walk): Walk {
+  const kept = new Set(walk.nodes.filter((n) => n.ring <= 1).map((n) => n.id));
+  return { centre: walk.centre, nodes: walk.nodes.filter((n) => kept.has(n.id)), edges: walk.edges.filter((e) => kept.has(e.a) && kept.has(e.b)) };
+}
+
 /** The first sentence of a summary, cut short enough for a hover. */
 export function firstSentence(text: string, max = 200): string {
   const flat = text.replace(/\s+/g, " ").trim();
