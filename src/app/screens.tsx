@@ -50,13 +50,13 @@ function Screens({ screen, host }: { screen: Screen; host: ScreenHost }) {
       {screen === "home" ? (
         <HomeDashboard links={false} />
       ) : screen === "brain" ? (
-        <BrainOf key={host.noteId ?? ""} centreId={host.noteId ?? undefined} />
+        <BrainOf key={host.noteId ?? ""} centreId={host.noteId ?? undefined} links={false} />
       ) : screen === "search" ? (
         <SearchProvider>
           <SearchPane />
         </SearchProvider>
       ) : screen === "web" ? (
-        <WebView />
+        <WebView links={false} />
       ) : (
         host.noteId && <NoteAbout key={host.noteId} id={host.noteId} />
       )}

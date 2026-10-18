@@ -47,6 +47,11 @@ export function Input({ size, className = "", ...props }: Omit<React.InputHTMLAt
 
 export const selectClass = "scribe-input scribe-select";
 
+export function inputClass(size: "md" | "lg" = "md", fullWidth = true): string {
+  void size;
+  return fullWidth ? "scribe-input w-full" : "scribe-input";
+}
+
 export function Heading({ children, className = "" }: { children: React.ReactNode; className?: string }) {
   return <h3 className={`scribe-heading ${className}`}>{children}</h3>;
 }

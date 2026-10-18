@@ -14,7 +14,8 @@ import { api, useApi } from "@/lib/api";
 import type { FactHit } from "@/lib/note/fact-line";
 import { noteName, normalizeTags } from "@/lib/note/filing";
 import { NoteRow } from "@/components/note-row";
-import { BrainHits, SpentLine } from "@/components/what-next";
+import { BrainHits } from "@/components/what-next";
+import { SpentLine } from "@/components/reading-prose";
 
 type Spent = { costUsd: number; readTokens: number; wroteTokens: number };
 import { NoteShortcuts } from "@/components/note-shortcuts";

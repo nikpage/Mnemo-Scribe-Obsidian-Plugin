@@ -146,16 +146,19 @@ ${R} .gap-3 { gap: 12px; }
 ${R} .space-y-0\.5 > * + * { margin-top: 2px; }
 ${R} .space-y-1 > * + * { margin-top: 4px; }
 ${R} .space-y-2 > * + * { margin-top: 8px; }
+${R} .space-y-3 > * + * { margin-top: 12px; }
 ${R} .space-y-4 > * + * { margin-top: 16px; }
 ${R} .space-y-5 > * + * { margin-top: 20px; }
 ${R} .mx-auto { margin-left: auto; margin-right: auto; }
 ${R} .mt-1 { margin-top: 4px; }
 ${R} .mt-2 { margin-top: 8px; }
 ${R} .mt-4 { margin-top: 16px; }
+${R} .mt-6 { margin-top: 24px; }
 ${R} .mb-1 { margin-bottom: 4px; }
 ${R} .mb-2 { margin-bottom: 8px; }
 ${R} .mb-3 { margin-bottom: 12px; }
 ${R} .mb-4 { margin-bottom: 16px; }
+${R} .mb-6 { margin-bottom: 24px; }
 ${R} .px-1 { padding-left: 4px; padding-right: 4px; }
 ${R} .px-2 { padding-left: 8px; padding-right: 8px; }
 ${R} .px-4 { padding-left: 6px; padding-right: 6px; }
@@ -163,6 +166,7 @@ ${R} .py-1 { padding-top: 4px; padding-bottom: 4px; }
 ${R} .py-3 { padding-top: 8px; padding-bottom: 8px; }
 ${R} .py-8 { padding-top: 32px; padding-bottom: 32px; }
 ${R} .pl-3 { padding-left: 12px; }
+${R} .pr-2 { padding-right: 8px; }
 ${R} .min-w-0 { min-width: 0; }
 ${R} .min-h-4 { min-height: 16px; }
 ${R} .max-h-40 { max-height: 160px; }
@@ -170,13 +174,18 @@ ${R} .h-3 { height: 12px; }
 ${R} .w-3 { width: 12px; }
 ${R} .h-8 { height: 32px; }
 ${R} .w-auto { width: auto; }
+${R} .w-24 { width: 96px; }
+${R} .grid { display: grid; }
 ${R} .overflow-y-auto { overflow-y: auto; }
 ${R} .truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 ${R} .line-clamp-2 { overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 ${R} .rounded { border-radius: 4px; }
 ${R} .rounded-lg { border-radius: 8px; }
+${R} .rounded-xl { border-radius: 12px; }
 ${R} .border-l-2 { border-left: 2px solid var(--s-line); }
+${R} .border-t { border-top: 1px solid var(--s-line); }
 ${R} .border-border { border-color: var(--s-line); }
+${R} .border-primary\/40 { border-color: color-mix(in srgb, var(--s-accent) 40%, transparent); }
 ${R} .border-dashed { border-style: dashed; }
 ${R} .bg-muted { background: var(--s-soft); }
 ${R} .hover\:bg-muted:hover, ${R} .hover\:bg-muted\/50:hover { background: var(--s-soft); }
@@ -187,6 +196,7 @@ ${R} .line-through { text-decoration: line-through; }
 ${R} .text-destructive { color: var(--s-danger); }
 ${R} .text-sm { font-size: 13px; }
 ${R} .leading-4 { line-height: 16px; }
+${R} .font-normal { font-weight: 400; }
 ${R} .font-medium { font-weight: 500; }
 ${R} .font-semibold { font-weight: 600; }
 ${R} .italic { font-style: italic; }
@@ -194,6 +204,8 @@ ${R} .uppercase { text-transform: uppercase; }
 ${R} .tracking-wide { letter-spacing: .025em; }
 ${R} .text-left { text-align: left; }
 ${R} .text-center { text-align: center; }
+${R} .text-right { text-align: right; }
+${R} .tabular-nums { font-variant-numeric: tabular-nums; }
 ${R} .whitespace-pre-line { white-space: pre-line; }
 ${R} .whitespace-pre-wrap { white-space: pre-wrap; }
 ${R} .text-foreground { color: var(--s-text); }
@@ -225,7 +237,7 @@ ${R} .stroke-card { stroke: var(--s-bg); }
 `;
 
 /** Left undrawn on purpose: the app's wide-screen rules and page margins, which a side panel has no room for. */
-export const UNDRAWN = ["md:hidden", "md:p-6", "md:h-[70vh]", "p-4", "max-w-2xl"];
+export const UNDRAWN = ["md:hidden", "md:p-6", "md:h-[70vh]", "p-4", "max-w-2xl", "sm:grid-cols-2"];
 
 export function addStyle(doc: Document = document) {
   if (doc.getElementById("scribe-panel-style")) return;

@@ -20,7 +20,8 @@ import { showPicture } from "@/lib/note/web-picture";
 import type { WebSet } from "@/lib/note/web-set";
 import { BRAIN_VIEWS, type BrainView, brainOnly, withBrain } from "@/lib/note/walk-brain";
 import { type Kind, pickOf, readingOf } from "@/lib/note/what-next-target";
-import { BrainOf, JOB_LABEL, type Quote, ReadingById, quoteUrl } from "@/components/what-next";
+import { BrainOf, JOB_LABEL, ReadingById, quoteUrl } from "@/components/what-next";
+import type { Quote } from "@/components/reading-prose";
 
 /**
  * The walk (`lib/note/walk.ts`): the notes a few steps out from one tag or
@@ -171,10 +172,11 @@ function curve(ax: number, ay: number, bx: number, by: number, bow: number): str
 /**
  * The Web: one picture for the set in the address (`?set=`), every anchor an
  * orange centre in it, one list per anchor beside it; a bare address is the
- * one walk from the tag with most notes.
+ * one walk from the tag with most notes. `links` is false where the app's own
+ * pages are not reachable (a note app's panel).
  */
-export function WebView({ set }: { set?: WebSet }) {
-  return <WalkPanel anchorKey={(set?.live ?? []).join(",")} struck={set?.struck ?? NO_TAGS} />;
+export function WebView({ set, links = true }: { set?: WebSet; links?: boolean }) {
+  return <WalkPanel anchorKey={(set?.live ?? []).join(",")} struck={set?.struck ?? NO_TAGS} links={links} />;
 }
 
 /**
@@ -182,7 +184,7 @@ export function WebView({ set }: { set?: WebSet }) {
  * The list's rows make the trail: the notes and tags pressed, kept across walks, each lit with what one step reaches.
  * "View this map" draws only the trail, each a centre with what one step reaches; "Use" opens the Brain on exactly it.
  */
-function WalkPanel({ anchorKey, struck: struckTags }: { anchorKey: string; struck: string[] }) {
+function WalkPanel({ anchorKey, struck: struckTags, links }: { anchorKey: string; struck: string[]; links: boolean }) {
   const { t, lang } = useLang();
   setAllLabel(t("walkAll"));
   const struck = useMemo(() => new Set(struckTags), [struckTags]);
@@ -767,7 +769,7 @@ function WalkPanel({ anchorKey, struck: struckTags }: { anchorKey: string; struc
               {t("walkBrainClose")}
             </Button>
           </div>
-          <BrainOf key={priced?.target} pick={pick} alone />
+          <BrainOf key={priced?.target} pick={pick} alone links={links} />
         </section>
       )}
       <div className="mb-3 flex flex-wrap items-center gap-3">

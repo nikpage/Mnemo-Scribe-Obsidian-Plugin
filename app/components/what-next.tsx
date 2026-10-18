@@ -7,30 +7,28 @@ import { useCounts } from "@/hooks/use-notes-page";
 import { tagsByUse } from "@/lib/note/notes-page";
 import { busyUntilDone } from "@/lib/busy";
 import { useLang } from "@/hooks/use-lang";
-import { formatDate, formatFactDate, formatUsd } from "@/lib/format";
-import { inlineMarks, readingSections } from "@/lib/note/reading-sections";
+import { formatDate, formatFactDate } from "@/lib/format";
+import { readingSections } from "@/lib/note/reading-sections";
 import { EVERYTHING, type Kind, type Narrow, type Scope, type Trail, dropTag, flipTag, liveNarrow, monthsBefore, readingOf, startOf, subjectOf } from "@/lib/note/what-next-target";
-import { type LibraryRow, kindOf } from "@/lib/note/brain-library";
+import { type Fn, type LibraryRow, kindOf } from "@/lib/note/brain-library";
+import Link from "next/link";
 import { Plus } from "lucide-react";
 import { tipOf } from "@/lib/tooltip";
 import { Button, Chip, Cost, Input, Options, Pill } from "@/components/ui";
 import { NoteSection } from "@/components/note-section";
+import { Additions, PressButton, Prose, type Quote, ReadingProse, Sections, type Spent, SpentLine, type Under } from "@/components/reading-prose";
+import { FORMS, PieceFields, PieceView, VOICES, WriteIt, usePieceChoice } from "@/components/write-it";
 
 type Status = "running" | "done" | "failed";
-/** `spent` comes back for the owner's account alone: what the call really cost. */
-type Spent = { costUsd: number; readTokens: number; wroteTokens: number };
 type Row = { id: string; target: string; part: string | null; status: Status; reading: string | null; created_at: string; notes?: number | null; spent?: Spent };
-/** A row under a reading: an Elaborate names its part, an addition none. */
-type Under = { part: string | null; reading: string | null; created_at?: string; notes?: number | null; spent?: Spent };
 type Answer = { reading: Row | null; failed: "failed" | "declined" | null; more: Row[] };
-export type Quote = { credits: number | null; balance: number | null; notes?: number; fill?: number };
 type Suggestion = { label: string; subject: string; jobs: Kind[] };
 
 /** The jobs in the order they are offered, each named by what the person is about to do. */
 const JOBS: Kind[] = ["inspiration", "next-best", "study", "log"];
 export const JOB_LABEL = { picture: "jobPicture", inspiration: "jobInspiration", "next-best": "jobNextBest", study: "jobStudy", log: "jobLog", piece: "jobPiece" } as const;
 /** What each job hands back, in a line under its name: said from what its prompt asks for. */
-const JOB_WHAT = { picture: "jobPictureWhat", inspiration: "jobInspirationWhat", "next-best": "jobNextBestWhat", study: "jobStudyWhat", log: "jobLogWhat" } as const;
+const JOB_WHAT = { picture: "jobPictureWhat", inspiration: "jobInspirationWhat", "next-best": "jobNextBestWhat", study: "jobStudyWhat", log: "jobLogWhat", piece: "jobPieceWhat" } as const;
 
 /** How far back the notes go: a few spans, or dates picked. */
 const WHENS = ["any", "month", "3m", "year", "pick"] as const;
@@ -44,76 +42,6 @@ const LATEST = 10;
 
 export const quoteUrl = (scope: Scope, target: string, parentId?: string) =>
   `/api/notes/what-next/quote?scope=${scope}&target=${encodeURIComponent(target)}${parentId ? `&parentId=${parentId}` : ""}`;
-
-/** What a reading really cost, under it; only the owner's account is ever sent one. */
-export function SpentLine({ spent }: { spent?: Spent }) {
-  const { t } = useLang();
-  if (!spent) return null;
-  return (
-    <p className="text-xs text-muted-foreground">
-      {t("spentLine", { usd: formatUsd(spent.costUsd, 4), read: spent.readTokens, wrote: spent.wroteTokens })}
-    </p>
-  );
-}
-
-/** One block of written text: a paragraph per blank line, bold, italics and code drawn. */
-function Prose({ text }: { text: string }) {
-  return (
-    <div className="space-y-2 text-sm">
-      {text.split(/\n\s*\n/).map((p, i) => (
-        <p key={i} className="whitespace-pre-line">
-          {inlineMarks(p.trim()).map((run, j) =>
-            run.mark === "strong" ? (
-              <strong key={j}>{run.text}</strong>
-            ) : run.mark === "em" ? (
-              <em key={j}>{run.text}</em>
-            ) : run.mark === "code" ? (
-              <code key={j} className="rounded bg-muted px-1 text-xs">
-                {run.text}
-              </code>
-            ) : (
-              run.text
-            )
-          )}
-        </p>
-      ))}
-    </div>
-  );
-}
-
-/** A reading's text by its headings, nothing to press. */
-function Sections({ text }: { text: string }) {
-  return (
-    <>
-      {readingSections(text).map((section, i) => (
-        <section key={i}>
-          {section.heading && <h3 className="mb-1 text-sm font-semibold">{section.heading}</h3>}
-          {section.body && <Prose text={section.body} />}
-        </section>
-      ))}
-    </>
-  );
-}
-
-/** What was added to a reading as notes came in, oldest first, each under its date and how many notes it read. */
-function Additions({ more }: { more: Under[] }) {
-  const { lang, t } = useLang();
-  const added = more.filter((m) => !m.part && m.reading);
-  if (added.length === 0) return null;
-  return (
-    <>
-      {added.map((m, i) => (
-        <section key={i} className="space-y-2 border-l-2 border-border pl-3" data-addition>
-          <p className="text-xs font-semibold text-muted-foreground">{t("addedOn", { date: m.created_at ? formatDate(m.created_at, lang) : "", n: m.notes ?? 0 })}</p>
-          <div className="space-y-4">
-            <Sections text={m.reading!} />
-          </div>
-          <SpentLine spent={m.spent} />
-        </section>
-      ))}
-    </>
-  );
-}
 
 /**
  * The reading last asked for in `scope`, read back free while `open`, and
@@ -224,29 +152,6 @@ export function ReadingText({ scope, target }: { scope: Scope; target: string })
   );
 }
 
-/** A reading's text by its headings, each Elaborate written under the heading it writes out, then its additions. */
-export function ReadingProse({ text, more = [] }: { text: string; more?: Under[] }) {
-  return (
-    <div className="space-y-4">
-      {readingSections(text).map((section, i) => {
-        const out = section.heading ? more.find((m) => m.part === section.heading && m.reading) : undefined;
-        return (
-          <section key={i}>
-            {section.heading && <h3 className="mb-1 text-sm font-semibold">{section.heading}</h3>}
-            {section.body && <Prose text={section.body} />}
-            {out && (
-              <div className="mt-2 border-l-2 border-border pl-3">
-                <Prose text={readingSections(out.reading!).map((s) => [s.heading, s.body].filter(Boolean).join("\n\n")).join("\n\n")} />
-              </div>
-            )}
-          </section>
-        );
-      })}
-      <Additions more={more} />
-    </div>
-  );
-}
-
 /** One Brain output read back by its id, free: its text with every Elaborate and addition. */
 export function ReadingById({ id }: { id: string }) {
   const { data } = useApi<{ reading: { reading: string | null }; more: Under[] }>(`/api/notes/what-next?id=${encodeURIComponent(id)}`);
@@ -280,19 +185,6 @@ export function BrainHits({ rows }: { rows: LibraryRow[] }) {
         ))}
       </ul>
     </section>
-  );
-}
-
-/** The press, its price inside it, and in words under it so a phone sees why. */
-export function PressButton({ label, tip, primary, disabled, onPress, quote, why }: { label: string; tip: string; primary: boolean; disabled: boolean; onPress: () => void; quote?: Quote; why?: string }) {
-  return (
-    <div>
-      <Button size="sm" variant={primary ? "primary" : "secondary"} onClick={onPress} disabled={disabled || quote?.credits === null} tip={tipOf(tip, why)}>
-        {label}
-        <Cost credits={quote?.credits} why={why} />
-      </Button>
-      <p className="mt-1 min-h-4 text-xs text-muted-foreground">{quote?.credits ? why : ""}</p>
-    </div>
   );
 }
 
@@ -386,15 +278,20 @@ export function WhatNext({ scope, target = "" }: { scope: "overview" | "tags" | 
 /**
  * The Brain for the store: its tags on offer, most used first, and centred
  * on `centreId` when a note is open. The app's Brain panel and the plugins'
- * Brain tab are both this. Drawn once both are in.
+ * Brain tab are both this. Drawn once all is in, the voices and forms a
+ * piece is written in among it, so choosing "Write a piece" waits on nothing.
+ * `links` is false where the app's own pages are not reachable (a note app's
+ * panel).
  */
-export function BrainOf({ within, struck, alone, centreId, of, pick }: { within?: string[]; struck?: string[]; alone?: boolean; centreId?: string; of?: { id: string; title: string }; pick?: Trail }) {
+export function BrainOf({ within, struck, alone, centreId, of, pick, links = true }: { within?: string[]; struck?: string[]; alone?: boolean; centreId?: string; of?: { id: string; title: string }; pick?: Trail; links?: boolean }) {
   const counts = useCounts();
   const centre = useApi<{ recordings: { id: string; path: string }[] }>(centreId ? `/api/recordings?ids=${centreId}` : null);
+  const voices = useApi(VOICES);
+  const forms = useApi(FORMS);
   const tags = useMemo(() => tagsByUse(counts.data?.sets ?? []), [counts.data]);
-  if (!allAnswered(counts, centreId ? centre : { data: null })) return null;
+  if (!allAnswered(counts, voices, forms, centreId ? centre : { data: null })) return null;
   const here = centre.data?.recordings[0];
-  return <BrainReading tags={tags} within={within} struck={struck} alone={alone} centre={here ? { id: here.id, title: here.path } : undefined} of={of} pick={pick} />;
+  return <BrainReading tags={tags} within={within} struck={struck} alone={alone} centre={here ? { id: here.id, title: here.path } : undefined} of={of} pick={pick} links={links} />;
 }
 
 /**
@@ -413,6 +310,7 @@ export function BrainReading({
   centre,
   of,
   pick,
+  links = true,
 }: {
   tags: string[];
   within?: string[];
@@ -425,9 +323,15 @@ export function BrainReading({
   of?: { id: string; title: string };
   /** Starts on the Web's trail: those notes and the notes carrying those tags. */
   pick?: Trail;
+  /** False where the app's own pages are not reachable. */
+  links?: boolean;
 }) {
   const { lang, t } = useLang();
-  const [job, setJob] = useState<Kind>("picture");
+  const [job, setJob] = useState<Fn>("picture");
+  // A piece is written, not read: what it is, its notes from the same pills, its own press.
+  const writing = job === "piece";
+  const pieceChoice = usePieceChoice();
+  const [piece, setPiece] = useState<string | null>(null);
   const [topics, setTopics] = useState<string[]>([]);
   const [start] = useState(() => startOf(within, { struck: struckAtStart, alone, centre: centre?.id, of: of?.id, pick }));
   const [narrow, setNarrow] = useState<Narrow>(start.narrow);
@@ -441,14 +345,13 @@ export function BrainReading({
   const reading = useReading(asked?.scope ?? "overview", asked?.target ?? "", asked !== null);
   const { data: suggested } = useApi<{ suggestions: Suggestion[] }>("/api/notes/what-next/suggest");
   const { data: library } = useApi<{ readings: LibraryRow[] }>("/api/notes/what-next?library=1");
-  // Readings only: a piece opens on its own page, not in the panel.
-  const latest = (library?.readings ?? []).filter((r): r is LibraryRow & { scope: Scope } => r.scope !== "piece").slice(0, LATEST);
+  const latest = (library?.readings ?? []).slice(0, LATEST);
   const live = liveNarrow(narrow, struck);
-  const choice = { kind: job, topics, narrow: live };
+  const choice = { kind: writing ? "picture" : (job as Kind), topics, narrow: live };
   const wanted = readingOf(choice, centre?.title);
   // Priced on stand-in words: the wording never changes the price, so typing asks nothing.
   const priced = readingOf({ ...choice, topics: topics.length ? ["topic"] : [] }, "topic");
-  const quote = useApi<Quote>(quoteUrl(priced.scope, priced.target), { keepPreviousData: true });
+  const quote = useApi<Quote>(writing ? null : quoteUrl(priced.scope, priced.target), { keepPreviousData: true });
   // The price of what is chosen now: nothing, its slot held, while a changed choice is being priced.
   const price = answeredNow(quote);
   const why = price?.credits != null ? t("costReading", { n: price.credits, notes: price.notes ?? 0, balance: price.balance ?? 0 }) : undefined;
@@ -500,9 +403,20 @@ export function BrainReading({
           label={t("brainWant")}
           value={job}
           onChange={setJob}
-          options={(["picture", ...JOBS] as Kind[]).map((kind) => ({ value: kind, label: t(JOB_LABEL[kind]), hint: t(JOB_WHAT[kind]) }))}
+          options={[...(["picture", ...JOBS] as Kind[]).map((kind) => ({ value: kind as Fn, label: t(JOB_LABEL[kind]), hint: t(JOB_WHAT[kind]) })), { value: "piece" as Fn, label: t("pieceNew"), hint: t(JOB_WHAT.piece) }]}
         />
+        {links && (
+          <Link href="/writing" data-tip={t("tipWriting")} className="block text-xs text-primary hover:underline">
+            {t("writingNav")} →
+          </Link>
+        )}
       </section>
+
+      {writing && (
+        <section className="space-y-5">
+          <PieceFields choice={pieceChoice} brief="pieceBriefBrain" />
+        </section>
+      )}
 
       <section className="space-y-2">
         <h3 className="text-sm font-semibold">{t("brainWhich")}</h3>
@@ -552,9 +466,12 @@ export function BrainReading({
             <Plus className="h-3 w-3" aria-hidden />
             {t("brainAdd")}
           </Chip>
-          <Chip on={!!narrow.alone} aria-pressed={!!narrow.alone} tip={t("tipBrainAlone")} onClick={() => setNarrow({ ...narrow, alone: !narrow.alone })}>
-            {t("brainAlone")}
-          </Chip>
+          {/* A piece reads only the notes its pills leave; nothing joins from elsewhere. */}
+          {!writing && (
+            <Chip on={!!narrow.alone} aria-pressed={!!narrow.alone} tip={t("tipBrainAlone")} onClick={() => setNarrow({ ...narrow, alone: !narrow.alone })}>
+              {t("brainAlone")}
+            </Chip>
+          )}
         </div>
 
         {open === "when" && (
@@ -612,34 +529,72 @@ export function BrainReading({
         )}
       </section>
 
-      <section className="space-y-1">
-        <Button
-          variant="primary"
-          disabled={reading.writing || !price || none}
-          tip={tipOf(t("tipBrainRead"), why)}
-          onClick={() => {
-            setAsked(wanted);
-            void reading.press("read", wanted, price?.credits, async () => (await quote.mutate()) ?? undefined);
+      {writing ? (
+        <WriteIt
+          choice={pieceChoice}
+          narrow={live}
+          topics={topics}
+          onStarted={(id) => {
+            setAsked(null);
+            setPiece(id);
           }}
-        >
-          {busy ? t("whatNextReading") : price?.notes ? t("brainRead", { n: price.notes }) : t("whatNextRead")}
-          <Cost credits={price?.credits} why={why} />
-        </Button>
-        <p className="min-h-4 text-xs text-muted-foreground">
-          {none ? t("narrowNone") : price?.credits && price.balance != null ? t("brainBalance", { n: price.balance }) : ""}
-        </p>
-        {reading.message && <p className="text-xs text-muted-foreground">{reading.message}</p>}
-      </section>
+        />
+      ) : (
+        <section className="space-y-1">
+          <Button
+            variant="primary"
+            disabled={reading.writing || !price || none}
+            tip={tipOf(t("tipBrainRead"), why)}
+            onClick={() => {
+              setPiece(null);
+              setAsked(wanted);
+              void reading.press("read", wanted, price?.credits, async () => (await quote.mutate()) ?? undefined);
+            }}
+          >
+            {busy ? t("whatNextReading") : price?.notes ? t("brainRead", { n: price.notes }) : t("whatNextRead")}
+            <Cost credits={price?.credits} why={why} />
+          </Button>
+          <p className="min-h-4 text-xs text-muted-foreground">
+            {none ? t("narrowNone") : price?.credits && price.balance != null ? t("brainBalance", { n: price.balance }) : ""}
+          </p>
+          {reading.message && <p className="text-xs text-muted-foreground">{reading.message}</p>}
+        </section>
+      )}
 
       {asked && <ReadingBody reading={reading} label={labelOf(asked.scope, asked.target)} />}
+
+      {piece && (
+        <section className="mb-4 space-y-2" data-piece>
+          <PieceView key={piece} id={piece} />
+          {links && (
+            <Link href={`/writing/piece/${piece}`} data-tip={t("tipPieceOpenPage")} className="block text-xs text-primary hover:underline">
+              {t("pieceOpenPage")} →
+            </Link>
+          )}
+        </section>
+      )}
 
       {latest.length > 0 && (
         <NoteSection id="brain-earlier" title={t("brainLibrary")}>
           <ul className="space-y-1">
             {latest.map((r) => (
               <li key={r.id}>
-                <Button variant="link" size="sm" className="text-left" tip={t("tipBrainEarlier")} onClick={() => setAsked({ scope: r.scope, target: r.target })}>
-                  {r.title || labelOf(r.scope, r.target)} · {t(JOB_LABEL[kindOf(r.scope, r.target)])} · {formatDate(r.created_at, lang)}
+                <Button
+                  variant="link"
+                  size="sm"
+                  className="text-left"
+                  tip={t(r.scope === "piece" ? "tipPieceOpen" : "tipBrainEarlier")}
+                  onClick={() => {
+                    if (r.scope === "piece") {
+                      setAsked(null);
+                      setPiece(r.id);
+                    } else {
+                      setPiece(null);
+                      setAsked({ scope: r.scope, target: r.target });
+                    }
+                  }}
+                >
+                  {r.title || (r.scope === "piece" ? t("jobPiece") : labelOf(r.scope, r.target))} · {t(JOB_LABEL[kindOf(r.scope, r.target)])} · {formatDate(r.created_at, lang)}
                 </Button>
               </li>
             ))}
