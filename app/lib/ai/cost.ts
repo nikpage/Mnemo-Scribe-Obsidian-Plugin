@@ -11,25 +11,22 @@ import { createAdminClient } from "@/lib/supabase/admin";
  */
 const RATES = {
   // Gemini text models, per 1M tokens in / out. Checked 2026-09-24.
-  // `cached` is a token read from a context cache (explicit, or the implicit
-  // reuse Google applies by itself); `storage` is per 1M cached tokens per
-  // hour held. Flash-lite's two are 10% and the flash rate, not checked:
-  // this app never caches on it explicitly.
-  "gemini-3.1-flash-lite": { input: 0.25, output: 1.5, cached: 0.025, storage: 1.0, context: 1_048_576 },
+  // `cached` is a token read from the cache Google applies by itself.
+  // Flash-lite's is 10% of input, not checked.
+  "gemini-3.1-flash-lite": { input: 0.25, output: 1.5, cached: 0.025, context: 1_048_576 },
   // Reserved for the calls whose output is the product: the written answer,
-  // the weekly report, themes and angles. Promotional until 31 Dec 2026;
+  // the weekly report, themes and Brain readings. Promotional until 31 Dec 2026;
   // `from` is the list price, applied by itself to every call from that day.
-  // Cache rates checked 2026-09-30 (0.075 read, 0.50/h).
+  // Cache rate checked 2026-09-30.
   "gemini-3.8-flash": {
     input: 0.75,
     output: 3.75,
     cached: 0.075,
-    storage: 0.5,
     context: 1_048_576,
-    from: { day: "2027-01-01", input: 1.5, output: 7.5, cached: 0.15, storage: 1.0 },
+    from: { day: "2027-01-01", input: 1.5, output: 7.5, cached: 0.15 },
   },
   // Embeddings, per 1M input tokens. No output side.
-  "gemini-embedding-001": { input: 0.15, output: 0, cached: 0, storage: 0, context: 2_048 },
+  "gemini-embedding-001": { input: 0.15, output: 0, cached: 0, context: 2_048 },
 } as const;
 
 /**
@@ -77,7 +74,6 @@ export type Operation =
   | "series"
   | "insights"
   | "themes"
-  | "angles"
   | "what-next";
 
 /** The user a call is billed to, and the note it belongs to when there is one. */
@@ -86,7 +82,7 @@ export interface CostContext {
   recordingId?: string;
 }
 
-type Prices = { input: number; output: number; cached: number; storage: number };
+type Prices = { input: number; output: number; cached: number };
 type Rate = Prices & { long?: { over: number; input: number; output: number; cached: number }; from?: Prices & { day: string } };
 
 /** A model's prices on the day of the call: a promotion ends by itself on its `from` day (UTC). */
@@ -103,11 +99,6 @@ export function tokenCost(model: keyof typeof RATES, input: number, output: numb
   const base = pricesOn(model, at);
   const rate = base.long && input > base.long.over ? base.long : base;
   return ((input - cached) * rate.input + cached * rate.cached + output * rate.output) / 1_000_000;
-}
-
-/** Holding `tokens` in a context cache for `seconds`. */
-export function storageCost(model: keyof typeof RATES, tokens: number, seconds: number, at = new Date()): number {
-  return (tokens / 1_000_000) * pricesOn(model, at).storage * (seconds / 3600);
 }
 
 /** How many tokens the model reads in one call. */
@@ -195,31 +186,6 @@ export async function recordTokenCost(
     output,
     unit: "tokens",
     cost: tokenCost(model, input, output, cached),
-  });
-}
-
-/**
- * Putting text into a context cache: the tokens written, priced at the full
- * input rate, plus holding them for the cache's whole life, paid up front.
- * Google may bill the write lower; a ceiling that fails closed would rather
- * over-count.
- */
-export async function recordCacheCost(
-  ctx: CostContext,
-  operation: Operation,
-  model: keyof typeof RATES,
-  tokens: number,
-  ttlSeconds: number
-) {
-  await write({
-    ctx,
-    operation,
-    provider: "google",
-    model,
-    input: tokens,
-    output: 0,
-    unit: "tokens",
-    cost: tokenCost(model, tokens, 0) + storageCost(model, tokens, ttlSeconds),
   });
 }
 

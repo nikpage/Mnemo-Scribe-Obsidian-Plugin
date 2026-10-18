@@ -19,7 +19,9 @@ import { NoteSection } from "@/components/note-section";
 type Status = "running" | "done" | "failed";
 /** `spent` comes back for the owner's account alone: what the call really cost. */
 type Spent = { costUsd: number; readTokens: number; wroteTokens: number };
-type Row = { id: string; target: string; part: string | null; status: Status; reading: string | null; created_at: string; spent?: Spent };
+type Row = { id: string; target: string; part: string | null; status: Status; reading: string | null; created_at: string; notes?: number | null; spent?: Spent };
+/** A row under a reading: an Elaborate names its part, an addition none. */
+type Under = { part: string | null; reading: string | null; created_at?: string; notes?: number | null; spent?: Spent };
 type Answer = { reading: Row | null; failed: "failed" | "declined" | null; more: Row[] };
 export type Quote = { credits: number | null; balance: number | null; notes?: number; fill?: number };
 type Suggestion = { label: string; subject: string; jobs: Kind[] };
@@ -76,6 +78,40 @@ function Prose({ text }: { text: string }) {
         </p>
       ))}
     </div>
+  );
+}
+
+/** A reading's text by its headings, nothing to press. */
+function Sections({ text }: { text: string }) {
+  return (
+    <>
+      {readingSections(text).map((section, i) => (
+        <section key={i}>
+          {section.heading && <h3 className="mb-1 text-sm font-semibold">{section.heading}</h3>}
+          {section.body && <Prose text={section.body} />}
+        </section>
+      ))}
+    </>
+  );
+}
+
+/** What was added to a reading as notes came in, oldest first, each under its date and how many notes it read. */
+function Additions({ more }: { more: Under[] }) {
+  const { lang, t } = useLang();
+  const added = more.filter((m) => !m.part && m.reading);
+  if (added.length === 0) return null;
+  return (
+    <>
+      {added.map((m, i) => (
+        <section key={i} className="space-y-2 border-l-2 border-border pl-3" data-addition>
+          <p className="text-xs font-semibold text-muted-foreground">{t("addedOn", { date: m.created_at ? formatDate(m.created_at, lang) : "", n: m.notes ?? 0 })}</p>
+          <div className="space-y-4">
+            <Sections text={m.reading!} />
+          </div>
+          <SpentLine spent={m.spent} />
+        </section>
+      ))}
+    </>
   );
 }
 
@@ -171,6 +207,7 @@ function ReadingBody({ reading, label }: { reading: ReturnType<typeof useReading
           </section>
         );
       })}
+      <Additions more={data?.more ?? []} />
     </div>
   );
 }
@@ -182,18 +219,13 @@ export function ReadingText({ scope, target }: { scope: Scope; target: string })
   if (!text) return null;
   return (
     <div className="space-y-4">
-      {readingSections(text).map((section, i) => (
-        <section key={i}>
-          {section.heading && <h3 className="mb-1 text-sm font-semibold">{section.heading}</h3>}
-          {section.body && <Prose text={section.body} />}
-        </section>
-      ))}
+      <Sections text={text} />
     </div>
   );
 }
 
-/** A reading's text by its headings, each Elaborate written under the heading it writes out. */
-export function ReadingProse({ text, more = [] }: { text: string; more?: { part: string | null; reading: string | null }[] }) {
+/** A reading's text by its headings, each Elaborate written under the heading it writes out, then its additions. */
+export function ReadingProse({ text, more = [] }: { text: string; more?: Under[] }) {
   return (
     <div className="space-y-4">
       {readingSections(text).map((section, i) => {
@@ -210,13 +242,14 @@ export function ReadingProse({ text, more = [] }: { text: string; more?: { part:
           </section>
         );
       })}
+      <Additions more={more} />
     </div>
   );
 }
 
-/** One Brain output read back by its id, free: its text with every Elaborate. */
+/** One Brain output read back by its id, free: its text with every Elaborate and addition. */
 export function ReadingById({ id }: { id: string }) {
-  const { data } = useApi<{ reading: { reading: string | null }; more: { part: string | null; reading: string | null }[] }>(`/api/notes/what-next?id=${encodeURIComponent(id)}`);
+  const { data } = useApi<{ reading: { reading: string | null }; more: Under[] }>(`/api/notes/what-next?id=${encodeURIComponent(id)}`);
   const text = data?.reading.reading;
   return text ? <ReadingProse text={text} more={data.more} /> : null;
 }
@@ -251,7 +284,7 @@ export function BrainHits({ rows }: { rows: LibraryRow[] }) {
 }
 
 /** The press, its price inside it, and in words under it so a phone sees why. */
-function PressButton({ label, tip, primary, disabled, onPress, quote, why }: { label: string; tip: string; primary: boolean; disabled: boolean; onPress: () => void; quote?: Quote; why?: string }) {
+export function PressButton({ label, tip, primary, disabled, onPress, quote, why }: { label: string; tip: string; primary: boolean; disabled: boolean; onPress: () => void; quote?: Quote; why?: string }) {
   return (
     <div>
       <Button size="sm" variant={primary ? "primary" : "secondary"} onClick={onPress} disabled={disabled || quote?.credits === null} tip={tipOf(tip, why)}>
@@ -260,6 +293,61 @@ function PressButton({ label, tip, primary, disabled, onPress, quote, why }: { l
       </Button>
       <p className="mt-1 min-h-4 text-xs text-muted-foreground">{quote?.credits ? why : ""}</p>
     </div>
+  );
+}
+
+/**
+ * Notes come in since a reading: how many, and "Add what's new", which reads
+ * only those against the reading and writes what they change under it, at
+ * the price on the button. Says so when none have come in. `writing` is an
+ * addition already being written; `onPressed` asks the page again.
+ */
+export function AddNew({ reading, writing, onPressed }: { reading: { id: string; scope: Scope; target: string; created_at: string }; writing: boolean; onPressed: () => Promise<unknown> }) {
+  const { lang, t } = useLang();
+  const quote = useApi<Quote>(`${quoteUrl(reading.scope, reading.target)}&add=${reading.id}`);
+  const [pressed, setPressed] = useState(false);
+  const [note, setNote] = useState<string | null>(null);
+  if (!allAnswered(quote)) return null;
+  const price = quote.data;
+  const fresh = price?.notes ?? 0;
+  const why = price?.credits != null ? t("costReading", { n: price.credits, notes: fresh, balance: price.balance ?? 0 }) : undefined;
+  const busy = pressed || writing;
+
+  async function add() {
+    setPressed(true);
+    setNote(null);
+    const releasePage = busyUntilDone();
+    try {
+      await send("/api/notes/what-next", "POST", { scope: reading.scope, target: reading.target, parentId: reading.id, add: true, ...(price?.credits == null ? {} : { credits: price.credits }) });
+      await onPressed();
+    } catch (err) {
+      const status = err instanceof ApiError ? err.status : 0;
+      if (status === 412) {
+        const fresh = await quote.mutate();
+        setNote(t("priceChanged", { n: fresh?.credits ?? "?" }));
+      } else {
+        setNote(t(status === 402 ? "outOfCredits" : status === 429 ? "whatNextUsedUp" : status === 409 ? "whatNextBusy" : "whatNextFailed"));
+      }
+    } finally {
+      releasePage();
+      setPressed(false);
+      void quote.mutate();
+    }
+  }
+
+  return (
+    <section className="space-y-2" data-add-new>
+      <h3 className="text-sm font-semibold">{t("addNewTitle")}</h3>
+      {fresh === 0 && !busy ? (
+        <p className="text-sm text-muted-foreground">{t("addNoneSince", { date: formatDate(reading.created_at, lang) })}</p>
+      ) : (
+        <>
+          <p className="text-sm">{busy ? t("addWriting") : t("addNewWhat", { n: fresh })}</p>
+          <PressButton label={busy ? t("whatNextReading") : t("addNew")} tip={t("tipAddNew")} primary disabled={busy} quote={price} why={why} onPress={() => void add()} />
+        </>
+      )}
+      {note && <p className="text-xs text-muted-foreground">{note}</p>}
+    </section>
   );
 }
 

@@ -1,7 +1,6 @@
 // [Guru]
 
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { quoteFound } from "@/lib/note/angle-filter";
 import { readingSections } from "@/lib/note/reading-sections";
 import { EVERYTHING, type Kind, type Narrow, type Scope, subjectOf } from "@/lib/note/what-next-target";
 import { type BrainRef, joinsOf } from "@/lib/note/walk-brain";
@@ -13,8 +12,34 @@ import { type BrainRef, joinsOf } from "@/lib/note/walk-brain";
  * already holds, so the list and each reading's page are one request each.
  */
 
-/** One reading as the library lists it: no text, only what names and sorts it. */
-export type LibraryRow = { id: string; scope: Scope; target: string; created_at: string; title: string; notes: number };
+/** One reading as the library lists it: no text, only what names and sorts it; `fresh` the notes come in since it last read. */
+export type LibraryRow = { id: string; scope: Scope; target: string; created_at: string; title: string; notes: number; fresh?: number };
+
+/**
+ * Text as a quote is compared: case, curly quotes, dashes and runs of
+ * whitespace are how a faithful copy still differs from its source, so they
+ * are levelled; words are not.
+ */
+function levelled(text: string): string {
+  return text
+    .normalize("NFC")
+    .toLowerCase()
+    .replace(/[\u2018\u2019\u201A\u201B\u2032]/g, "'")
+    .replace(/[\u201C\u201D\u201E\u201F\u2033\u00AB\u00BB]/g, '"')
+    .replace(/[\u2013\u2014\u2212]/g, "-")
+    .replace(/\u2026/g, "...")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/** A shorter "quote" is a phrase any note could contain, not a source. */
+const QUOTE_MIN = 12;
+
+/** The quote appears in the note, word for word. */
+export function quoteFound(quote: string, text: string): boolean {
+  const q = levelled(quote).replace(/^["']+|["']+$/g, "").trim();
+  return q.length >= QUOTE_MIN && levelled(text).includes(q);
+}
 
 /** A passage a reading rested on, in the note it came from. */
 export type Extract = { id: string; quote: string };
@@ -75,6 +100,40 @@ export function keptExtracts(extracts: Extract[], read: { id: string; text: stri
     if (kept.length === EXTRACTS_MAX) break;
   }
   return kept;
+}
+
+/**
+ * Whether new notes can be added to a reading. One note read against the notes
+ * before it cannot: what comes after it was never its question.
+ */
+export function addable(scope: Scope): boolean {
+  return scope !== "item";
+}
+
+/** An addition to a Brain output: a row under it with no part (an Elaborate names the part it writes out). */
+export type Addition = { parent_id: string; created_at: string; reading: string | null; notes: number | null; read_ids: string[] | null; extracts: Extract[] | null };
+
+/** The written additions to the caller's outputs (`ids`, else every output), oldest first. */
+export async function additionsOf(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  admin: SupabaseClient<any, any, any>,
+  userId: string,
+  ids?: string[]
+): Promise<Addition[]> {
+  const query = admin
+    .from("what_next_readings")
+    .select("parent_id, created_at, reading, notes, read_ids, extracts")
+    .eq("user_id", userId)
+    .is("part", null)
+    .eq("status", "done");
+  const { data, error } = await (ids ? query.in("parent_id", ids) : query.not("parent_id", "is", null)).order("created_at", { ascending: true });
+  if (error) throw new Error(error.message);
+  return (data || []) as Addition[];
+}
+
+/** When an output last read its notes: its own writing, or its newest addition. */
+export function readUntil(output: { id: string; created_at: string }, additions: Addition[]): string {
+  return additions.filter((a) => a.parent_id === output.id).reduce((at, a) => (Date.parse(a.created_at) > Date.parse(at) ? a.created_at : at), output.created_at);
 }
 
 /** Brain outputs a search shows at most, in their own group under the notes. */
@@ -152,15 +211,19 @@ export async function brainRefs(
     .order("created_at", { ascending: false })
     .limit(WEB_BRAIN_MAX);
   if (error) throw new Error(error.message);
+  // What an addition read and quoted joins the output it was added to.
+  const added = await additionsOf(admin, userId);
   return (data || []).map((r) => {
-    const named = namedIn(r.reading ?? "", notes);
-    const quoted = [...new Set([...((r.extracts ?? []) as Extract[]).map((e) => e.id), ...named])];
+    const more = added.filter((a) => a.parent_id === r.id);
+    const named = namedIn([r.reading ?? "", ...more.map((a) => a.reading ?? "")].join("\n"), notes);
+    const quoted = [...new Set([...[r, ...more].flatMap((x) => (x.extracts ?? []) as Extract[]).map((e) => e.id), ...named])];
+    const read = more.flatMap((a) => a.read_ids ?? []);
     return {
       id: r.id,
       title: readingTitle(r),
       job: kindOf(r.scope, r.target),
       at: r.created_at,
-      joins: r.read_ids ? joinsOf([...r.read_ids, ...(r.elsewhere_ids ?? [])], quoted) : named,
+      joins: r.read_ids ? joinsOf([...r.read_ids, ...(r.elsewhere_ids ?? []), ...read], quoted) : [...new Set([...named, ...read])],
       quoted,
     };
   });
