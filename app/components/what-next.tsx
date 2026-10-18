@@ -28,7 +28,7 @@ type Suggestion = { label: string; subject: string; jobs: Kind[] };
 
 /** The jobs in the order they are offered, each named by what the person is about to do. */
 const JOBS: Kind[] = ["inspiration", "next-best", "study", "log"];
-export const JOB_LABEL = { picture: "jobPicture", inspiration: "jobInspiration", "next-best": "jobNextBest", study: "jobStudy", log: "jobLog" } as const;
+export const JOB_LABEL = { picture: "jobPicture", inspiration: "jobInspiration", "next-best": "jobNextBest", study: "jobStudy", log: "jobLog", piece: "jobPiece" } as const;
 /** What each job hands back, in a line under its name: said from what its prompt asks for. */
 const JOB_WHAT = { picture: "jobPictureWhat", inspiration: "jobInspirationWhat", "next-best": "jobNextBestWhat", study: "jobStudyWhat", log: "jobLogWhat" } as const;
 
@@ -441,7 +441,8 @@ export function BrainReading({
   const reading = useReading(asked?.scope ?? "overview", asked?.target ?? "", asked !== null);
   const { data: suggested } = useApi<{ suggestions: Suggestion[] }>("/api/notes/what-next/suggest");
   const { data: library } = useApi<{ readings: LibraryRow[] }>("/api/notes/what-next?library=1");
-  const latest = (library?.readings ?? []).slice(0, LATEST);
+  // Readings only: a piece opens on its own page, not in the panel.
+  const latest = (library?.readings ?? []).filter((r): r is LibraryRow & { scope: Scope } => r.scope !== "piece").slice(0, LATEST);
   const live = liveNarrow(narrow, struck);
   const choice = { kind: job, topics, narrow: live };
   const wanted = readingOf(choice, centre?.title);

@@ -12,8 +12,18 @@ import { type BrainRef, joinsOf } from "@/lib/note/walk-brain";
  * already holds, so the list and each reading's page are one request each.
  */
 
-/** One reading as the library lists it: no text, only what names and sorts it; `fresh` the notes come in since it last read. */
-export type LibraryRow = { id: string; scope: Scope; target: string; created_at: string; title: string; notes: number; fresh?: number };
+/** What a library row is of: a reading's scope, or a piece written in the person's voice (`lib/writing/piece.ts`). */
+export type OutputScope = Scope | "piece";
+
+/** A Brain function the library sorts by: a reading's job, or a piece. */
+export type Fn = Kind | "piece";
+
+/**
+ * One output as the library lists it: no text, only what names and sorts it;
+ * `fresh` the notes come in since it last read. A piece's `target` is its
+ * form: a built-in form's key, else the form's own name.
+ */
+export type LibraryRow = { id: string; scope: OutputScope; target: string; created_at: string; title: string; notes: number; fresh?: number };
 
 /**
  * Text as a quote is compared: case, curly quotes, dashes and runs of
@@ -50,13 +60,19 @@ export const EXTRACTS_MAX = 6;
 export const SORTS = ["newest", "oldest", "notes"] as const;
 export type Sort = (typeof SORTS)[number];
 
-/** The Brain function a reading was: a subject reading's job, else the big picture. */
-export function kindOf(scope: Scope, target: string): Kind {
+/** The Brain function an output was: a piece, a subject reading's job, else the big picture. */
+export function kindOf(scope: OutputScope, target: string): Fn {
+  if (scope === "piece") return "piece";
+  return scope === "subject" ? (subjectOf(target)?.kind ?? "picture") : "picture";
+}
+
+/** A reading's job: what the Web and the Brain panel know an output by. */
+export function jobOf(scope: Scope, target: string): Kind {
   return scope === "subject" ? (subjectOf(target)?.kind ?? "picture") : "picture";
 }
 
 /** What a reading read, as asked: its subject (none for all notes) and its narrowing. */
-export function askedOf(scope: Scope, target: string): { subject: string; narrow: Partial<Narrow> } {
+export function askedOf(scope: OutputScope, target: string): { subject: string; narrow: Partial<Narrow> } {
   if (scope === "subject") {
     const asked = subjectOf(target);
     return asked ? { subject: asked.subject === EVERYTHING ? "" : asked.subject, narrow: asked.narrow } : { subject: "", narrow: {} };
@@ -75,7 +91,7 @@ export function readingTitle(row: { title: string | null; reading: string | null
 }
 
 /** The library in the order asked for, only the function asked for when one is. */
-export function arrange(rows: LibraryRow[], sort: Sort, kind: Kind | null): LibraryRow[] {
+export function arrange(rows: LibraryRow[], sort: Sort, kind: Fn | null): LibraryRow[] {
   const shown = kind ? rows.filter((r) => kindOf(r.scope, r.target) === kind) : rows;
   const newest = (a: LibraryRow, b: LibraryRow) => b.created_at.localeCompare(a.created_at);
   return [...shown].sort(sort === "oldest" ? (a, b) => newest(b, a) : sort === "notes" ? (a, b) => b.notes - a.notes || newest(a, b) : newest);
@@ -221,7 +237,7 @@ export async function brainRefs(
     return {
       id: r.id,
       title: readingTitle(r),
-      job: kindOf(r.scope, r.target),
+      job: jobOf(r.scope, r.target),
       at: r.created_at,
       joins: r.read_ids ? joinsOf([...r.read_ids, ...(r.elsewhere_ids ?? []), ...read], quoted) : [...new Set([...named, ...read])],
       quoted,

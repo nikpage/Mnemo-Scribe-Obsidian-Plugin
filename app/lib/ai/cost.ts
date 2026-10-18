@@ -74,7 +74,8 @@ export type Operation =
   | "series"
   | "insights"
   | "themes"
-  | "what-next";
+  | "what-next"
+  | "writing";
 
 /** The user a call is billed to, and the note it belongs to when there is one. */
 export interface CostContext {
@@ -99,6 +100,12 @@ export function tokenCost(model: keyof typeof RATES, input: number, output: numb
   const base = pricesOn(model, at);
   const rate = base.long && input > base.long.over ? base.long : base;
   return ((input - cached) * rate.input + cached * rate.cached + output * rate.output) / 1_000_000;
+}
+
+/** How many read tokens one written token costs on the day: what a press that writes at length is priced by. */
+export function outputWeight(model: keyof typeof RATES, at = new Date()): number {
+  const rate = pricesOn(model, at);
+  return rate.output / rate.input;
 }
 
 /** How many tokens the model reads in one call. */

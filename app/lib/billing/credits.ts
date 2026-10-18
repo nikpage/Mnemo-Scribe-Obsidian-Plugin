@@ -22,7 +22,8 @@ type Admin = SupabaseClient<any, any, any>;
 
 /**
  * `reading` (What next and Elaborate), `ask` and `import` are priced by tokens
- * read and quoted before the press; the person pays exactly the quote.
+ * read and quoted before the press; the person pays exactly the quote. `write`
+ * (a piece, `lib/writing/piece.ts`) the same, its writing counted in.
  *
  * A credit buys tokens of ONE model (`gemini-3.8-flash`). If people ever
  * choose their model (not planned), a token stops being one price: tokenizers
@@ -30,7 +31,7 @@ type Admin = SupabaseClient<any, any, any>;
  * model and lose money on a dear one. Charge then in a common unit, the
  * call's real dollar cost times one markup, before offering the choice.
  */
-export type Spend = "record" | "import" | "reading" | "ask";
+export type Spend = "record" | "import" | "reading" | "ask" | "write";
 
 /**
  * The least a reading or an Ask takes: it covers the first 20,000 tokens read
@@ -92,7 +93,7 @@ export async function priceOf(admin: Admin, operation: Spend, units: number): Pr
   if (!rate) throw new Error(`No credit rate for ${operation}`);
   // PRICING.md: a recording pays its rate for the first 15 minutes, 1 credit for the second.
   if (operation === "record") return units > 0 ? Number(rate.credits) + Math.ceil(units / Number(rate.per)) - 1 : 0;
-  if (operation === "reading" || operation === "ask") return Math.max(READ_MINIMUM, creditsFor(rate, units));
+  if (operation === "reading" || operation === "ask" || operation === "write") return Math.max(READ_MINIMUM, creditsFor(rate, units));
   return creditsFor(rate, units);
 }
 
