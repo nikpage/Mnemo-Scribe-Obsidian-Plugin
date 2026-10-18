@@ -47,6 +47,11 @@ export async function generate(opts: {
    * speed names it; the timing line below says whether it mattered.
    */
   thinking?: "low" | "medium" | "high";
+  /**
+   * The person chose this model for this call: it runs as named, not as
+   * whatever /admin puts its tier on, so it costs what they were shown.
+   */
+  exact?: boolean;
 }): Promise<string> {
   const { text } = await generateWithUsage(opts);
   return text;
@@ -72,8 +77,8 @@ export interface Usage {
  * exact in every language (Czech runs far more tokens per character than
  * English) and free — no budget, no cost row. Prices a press before it runs.
  */
-export async function countTokens(model: TextModel, parts: (string | Part)[]): Promise<number> {
-  const chosen = resolveModel(model, await getAppSettings());
+export async function countTokens(model: TextModel, parts: (string | Part)[], exact = false): Promise<number> {
+  const chosen = runsOn(model, await getAppSettings(), exact);
   const { totalTokens } = await genAI.getGenerativeModel({ model: chosen }).countTokens(parts);
   return totalTokens;
 }
@@ -82,7 +87,7 @@ export async function countTokens(model: TextModel, parts: (string | Part)[]): P
 export async function generateWithUsage(opts: Parameters<typeof generate>[0]): Promise<{ text: string; usage: Usage }> {
   await assertBudget(opts.ctx);
 
-  const chosen = resolveModel(opts.model, await getAppSettings());
+  const chosen = runsOn(opts.model, await getAppSettings(), opts.exact);
   // `thinkingConfig` is newer than this SDK's types; the SDK sends the
   // config as it is given.
   const config = {
@@ -170,6 +175,11 @@ function declineReason(response: {
  */
 export function resolveModel(asked: TextModel, settings: AppSettings): TextModel {
   return asked === DEFAULT_SETTINGS.synthesisModel ? settings.synthesisModel : settings.standardModel;
+}
+
+/** The model a call runs on: the one the person chose, as named; otherwise its tier's. */
+export function runsOn(asked: TextModel, settings: AppSettings, exact = false): TextModel {
+  return exact ? asked : resolveModel(asked, settings);
 }
 
 /**

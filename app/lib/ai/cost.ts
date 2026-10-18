@@ -102,10 +102,14 @@ export function tokenCost(model: keyof typeof RATES, input: number, output: numb
   return ((input - cached) * rate.input + cached * rate.cached + output * rate.output) / 1_000_000;
 }
 
-/** How many read tokens one written token costs on the day: what a press that writes at length is priced by. */
-export function outputWeight(model: keyof typeof RATES, at = new Date()): number {
+/**
+ * What reading `read` and writing `wrote` tokens on `model` costs, counted in
+ * tokens read by `as` on the day: how steps on different models are priced
+ * in one unit.
+ */
+export function asReadTokens(model: keyof typeof RATES, read: number, wrote: number, as: keyof typeof RATES, at = new Date()): number {
   const rate = pricesOn(model, at);
-  return rate.output / rate.input;
+  return (read * rate.input + wrote * rate.output) / pricesOn(as, at).input;
 }
 
 /** How many tokens the model reads in one call. */
