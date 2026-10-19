@@ -1,6 +1,8 @@
 // [utils]
 
+import { createContext, useCallback, useContext, useRef, useState } from "react";
 import { Coins } from "lucide-react";
+import { useLang } from "@/hooks/use-lang";
 
 /**
  * The app's `components/ui.tsx` as the plugins run it: the same parts with
@@ -28,6 +30,10 @@ export function Button({
   ...props
 }: React.ButtonHTMLAttributes<HTMLButtonElement> & { variant?: ButtonVariant; size?: "sm" | "md" | "lg"; tip?: string }) {
   return <button type="button" data-tip={tip} {...props} className={`${VARIANT[variant]} ${size === "sm" ? "is-small" : ""} ${className}`} />;
+}
+
+export function buttonClass(variant: ButtonVariant = "secondary", size?: "sm" | "md" | "lg"): string {
+  return `${VARIANT[variant]} ${size === "sm" ? "is-small" : ""}`;
 }
 
 export function Cost({ credits, why }: { credits: number | null | undefined; why?: string }) {
@@ -123,4 +129,54 @@ export function Options<T extends string>({
 
 export function List({ children, className = "" }: { children: React.ReactNode; className?: string }) {
   return <ul className={`scribe-list ${className}`}>{children}</ul>;
+}
+
+type ConfirmOptions = { action: string; cancel: string; danger?: boolean };
+type Ask = (message: string, options: ConfirmOptions) => Promise<boolean>;
+
+const ConfirmContext = createContext<Ask | null>(null);
+
+/** "Are you sure?" inside the panel, as the app asks it in its own look. */
+export function useConfirm(): Ask {
+  const ask = useContext(ConfirmContext);
+  if (!ask) throw new Error("useConfirm must be used inside ConfirmProvider");
+  return ask;
+}
+
+export function ConfirmProvider({ children }: { children: React.ReactNode }) {
+  const { t } = useLang();
+  const [pending, setPending] = useState<{ message: string; options: ConfirmOptions } | null>(null);
+  const answer = useRef<(yes: boolean) => void>(() => {});
+  const ask = useCallback<Ask>(
+    (message, options) =>
+      new Promise((resolve) => {
+        answer.current = resolve;
+        setPending({ message, options });
+      }),
+    []
+  );
+  function close(yes: boolean) {
+    answer.current(yes);
+    setPending(null);
+  }
+  return (
+    <ConfirmContext.Provider value={ask}>
+      {children}
+      {pending && (
+        <div className="scribe-confirm" role="alertdialog" aria-label={pending.message}>
+          <div>
+            <p>{pending.message}</p>
+            <div className="scribe-row">
+              <Button tip={t("tipConfirmCancel")} onClick={() => close(false)}>
+                {pending.options.cancel}
+              </Button>
+              <Button variant={pending.options.danger ? "record" : "primary"} tip={t("tipConfirmGo")} onClick={() => close(true)}>
+                {pending.options.action}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+    </ConfirmContext.Provider>
+  );
 }

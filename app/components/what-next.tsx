@@ -10,7 +10,7 @@ import { useLang } from "@/hooks/use-lang";
 import { formatDate, formatFactDate } from "@/lib/format";
 import { readingSections } from "@/lib/note/reading-sections";
 import { EVERYTHING, type Kind, type Narrow, type Scope, type Trail, dropTag, flipTag, liveNarrow, monthsBefore, readingOf, startOf, subjectOf } from "@/lib/note/what-next-target";
-import { type LibraryRow, kindOf } from "@/lib/note/brain-library";
+import { type LibraryRow, askedOf, kindOf } from "@/lib/note/brain-library";
 import Link from "next/link";
 import { Plus } from "lucide-react";
 import { tipOf } from "@/lib/tooltip";
@@ -575,6 +575,14 @@ export function BrainReading({
       )}
     </div>
   );
+}
+
+/** What a reading read, in a few words: its subject or all notes, then the tags it kept to. */
+export function readOf(t: ReturnType<typeof useLang>["t"], scope: Scope, target: string): string {
+  if (scope === "item") return t("libraryOneNote");
+  const { subject, narrow } = askedOf(scope, target);
+  const tags = (narrow.only ?? []).map((tag) => `#${tag}`).join(" ");
+  return [subject || (tags ? "" : t("brainEverything")), tags].filter(Boolean).join(" · ");
 }
 
 /** New piece, starting on the notes a Brain output read. */

@@ -124,7 +124,7 @@ export type IngestResult = {
  * here, the same for every app. The boundary is random for the same reason it always is: it must not occur in
  * anything being sent.
  */
-function multipart(
+export function multipart(
   files: { name: string; data: ArrayBuffer }[],
   fields: Record<string, string>
 ): { body: ArrayBuffer; contentType: string } {
@@ -189,7 +189,8 @@ export class ScribeApi {
     return { baseUrl: this.baseUrl, token: this.token, http: this.http };
   }
 
-  private url(path: string): string {
+  /** Scribe's own address for `path`: a route, or one of the app's pages opened in the browser. */
+  url(path: string): string {
     return `${this.baseUrl.replace(/\/+$/, "")}${path}`;
   }
 

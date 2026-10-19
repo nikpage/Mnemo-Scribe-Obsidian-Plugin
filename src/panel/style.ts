@@ -111,6 +111,9 @@ ${R} .scribe-notice.is-primary { border-color: color-mix(in srgb, var(--s-accent
 ${R} .scribe-notice.is-error { border-color: var(--s-danger); color: var(--s-danger); }
 ${R} .scribe-list { border-top: 1px solid var(--s-line); }
 ${R} .scribe-list > li { border-bottom: 1px solid var(--s-line); }
+${R} .scribe-confirm { position: sticky; bottom: 0; z-index: 5; padding-top: 12px; }
+${R} .scribe-confirm > div { background: var(--s-bg); border: 1px solid var(--s-line); border-radius: var(--s-card); padding: 14px; box-shadow: 0 4px 16px rgba(0, 0, 0, .18); }
+${R} .scribe-confirm .scribe-row { justify-content: flex-end; margin-top: 16px; }
 `;
 
 /**
@@ -128,6 +131,8 @@ ${R} .flex-1 { flex: 1 1 0%; }
 ${R} .flex-wrap { flex-wrap: wrap; }
 ${R} .items-center { align-items: center; }
 ${R} .justify-center { justify-content: center; }
+${R} .justify-between { justify-content: space-between; }
+${R} .inline-block { display: inline-block; }
 ${R} .items-start { align-items: flex-start; }
 ${R} .shrink-0 { flex-shrink: 0; }
 ${R} .pb-3 { padding-bottom: 12px; }
@@ -143,12 +148,14 @@ ${R} .group[open] > summary .group-open\:rotate-90 { transform: rotate(90deg); }
 ${R} .gap-1 { gap: 4px; }
 ${R} .gap-2 { gap: 8px; }
 ${R} .gap-3 { gap: 12px; }
+${R} .gap-4 { gap: 16px; }
 ${R} .space-y-0\.5 > * + * { margin-top: 2px; }
 ${R} .space-y-1 > * + * { margin-top: 4px; }
 ${R} .space-y-2 > * + * { margin-top: 8px; }
 ${R} .space-y-3 > * + * { margin-top: 12px; }
 ${R} .space-y-4 > * + * { margin-top: 16px; }
 ${R} .space-y-5 > * + * { margin-top: 20px; }
+${R} .space-y-8 > * + * { margin-top: 32px; }
 ${R} .mx-auto { margin-left: auto; margin-right: auto; }
 ${R} .mt-1 { margin-top: 4px; }
 ${R} .mt-2 { margin-top: 8px; }
@@ -159,9 +166,11 @@ ${R} .mb-2 { margin-bottom: 8px; }
 ${R} .mb-3 { margin-bottom: 12px; }
 ${R} .mb-4 { margin-bottom: 16px; }
 ${R} .mb-6 { margin-bottom: 24px; }
+${R} .mb-8 { margin-bottom: 32px; }
 ${R} .px-1 { padding-left: 4px; padding-right: 4px; }
 ${R} .px-2 { padding-left: 8px; padding-right: 8px; }
 ${R} .px-4 { padding-left: 6px; padding-right: 6px; }
+${R} .py-0\.5 { padding-top: 2px; padding-bottom: 2px; }
 ${R} .py-1 { padding-top: 4px; padding-bottom: 4px; }
 ${R} .py-3 { padding-top: 8px; padding-bottom: 8px; }
 ${R} .py-8 { padding-top: 32px; padding-bottom: 32px; }
@@ -172,6 +181,8 @@ ${R} .min-h-4 { min-height: 16px; }
 ${R} .max-h-40 { max-height: 160px; }
 ${R} .h-3 { height: 12px; }
 ${R} .w-3 { width: 12px; }
+${R} .h-4 { height: 16px; }
+${R} .w-4 { width: 16px; }
 ${R} .h-8 { height: 32px; }
 ${R} .w-auto { width: auto; }
 ${R} .w-24 { width: 96px; }
@@ -182,12 +193,15 @@ ${R} .line-clamp-2 { overflow: hidden; display: -webkit-box; -webkit-box-orient:
 ${R} .rounded { border-radius: 4px; }
 ${R} .rounded-lg { border-radius: 8px; }
 ${R} .rounded-xl { border-radius: 12px; }
+${R} .rounded-full { border-radius: 999px; }
 ${R} .border-l-2 { border-left: 2px solid var(--s-line); }
 ${R} .border-t { border-top: 1px solid var(--s-line); }
 ${R} .border-border { border-color: var(--s-line); }
 ${R} .border-primary\/40 { border-color: color-mix(in srgb, var(--s-accent) 40%, transparent); }
 ${R} .border-dashed { border-style: dashed; }
 ${R} .bg-muted { background: var(--s-soft); }
+${R} .bg-primary\/10 { background: color-mix(in srgb, var(--s-accent) 10%, transparent); }
+${R} .bg-destructive\/10 { background: color-mix(in srgb, var(--s-danger) 10%, transparent); }
 ${R} .hover\:bg-muted:hover, ${R} .hover\:bg-muted\/50:hover { background: var(--s-soft); }
 ${R} .hover\:underline:hover { text-decoration: underline; }
 ${R} .text-xs { font-size: 12px; }
@@ -237,7 +251,7 @@ ${R} .stroke-card { stroke: var(--s-bg); }
 `;
 
 /** Left undrawn on purpose: the app's wide-screen rules and page margins, which a side panel has no room for. */
-export const UNDRAWN = ["md:hidden", "md:p-6", "md:h-[70vh]", "p-4", "max-w-2xl", "sm:grid-cols-2"];
+export const UNDRAWN = ["md:hidden", "md:p-6", "md:h-[70vh]", "p-4", "max-w-2xl", "max-w-3xl", "sm:grid-cols-2"];
 
 export function addStyle(doc: Document = document) {
   if (doc.getElementById("scribe-panel-style")) return;
