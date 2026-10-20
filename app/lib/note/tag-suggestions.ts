@@ -9,7 +9,7 @@ import { READ } from "@/lib/note/shelf";
 import { storyMeaning } from "@/lib/note/stories";
 import { loadSubjects } from "@/lib/note/subjects";
 import { canParent, parentsOf } from "@/lib/note/tag-tree";
-import { type Earned, type OwnTag, type Proposal, type TagSummary, barred, checkNotes, planTags, quoted, tagNote } from "@/lib/note/tagging";
+import { type Earned, type OwnTag, type Proposal, type TagSummary, type Verdict, barred, checkNotes, planTags, quoted, tagNote } from "@/lib/note/tagging";
 import { addParents, applyVocabulary, withParents, joinKnown, loadTagRows, loadVocabulary, rememberTags } from "@/lib/note/vocabulary";
 import { recordEvidence } from "@/lib/theories";
 import { startBackground } from "@/lib/background";
@@ -536,14 +536,14 @@ export async function recheck(admin: Admin, userId: string, runId: string): Prom
     const due = own.filter((tag) => tag.meaning && tag.meaning !== tag.checked && !isMnemo(tag.name));
     if (due.length === 0) break;
     const verdicts = await checkNotes(
-      notes.map((n) => ({ id: n.id, text: noteText(n) })),
+      notes.map((n) => ({ id: n.id, text: noteText(n), has: n.tags || [] })),
       due,
       { subjects: await clientNames(admin, userId), ctx: { userId } }
     );
     await ask(admin, userId, changesFrom(notes, due.map((t) => t.name), verdicts));
     // A tag already on a note and found to fit gets its sentence: nothing changes but the why.
     for (const note of notes) {
-      const found = foundWhy(note, verdicts.get(note.id) || []);
+      const found = foundWhy(note, verdicts.get(note.id)?.fits || []);
       if (found) await admin.from("recordings").update({ tag_why: found }).eq("user_id", userId).eq("id", note.id);
     }
     for (const tag of due) {
@@ -558,8 +558,8 @@ export async function recheck(admin: Admin, userId: string, runId: string): Prom
  * A note with no tag that the re-check found none for: the tag it needs is
  * asked about, as a note being filed would be.
  */
-async function askForBare(admin: Admin, userId: string, notes: Awaited<ReturnType<typeof readableNotes>>, verdicts: Map<string, Earned[]>): Promise<void> {
-  const bare = notes.filter((n) => (n.tags || []).length === 0 && (verdicts.get(n.id) || []).length === 0);
+async function askForBare(admin: Admin, userId: string, notes: Awaited<ReturnType<typeof readableNotes>>, verdicts: Map<string, Verdict>): Promise<void> {
+  const bare = notes.filter((n) => (n.tags || []).length === 0 && (verdicts.get(n.id)?.fits || []).length === 0);
   if (bare.length === 0) return;
   const own = await ownTags(admin, userId, await tagsInUse(admin, userId));
   const opts = { lang: await primaryLanguage(admin, userId), subjects: await clientNames(admin, userId), ctx: { userId } };
@@ -588,22 +588,27 @@ export function foundWhy(note: { tags: string[] | null; tag_why: Record<string, 
   return changed ? why : null;
 }
 
-/** What a re-check found, as suggestions: a tag that fits and is missing, one that is there and does not fit. */
+/**
+ * What a re-check found, as suggestions: a tag that fits and is missing, with
+ * its quote; one that is there and does not fit, with the reason. A tag the
+ * re-check said nothing about is left alone.
+ */
 export function changesFrom(
   notes: { id: string; tags: string[] | null; tag_why: Record<string, string> | null }[],
   checked: string[],
-  verdicts: Map<string, Earned[]>
+  verdicts: Map<string, Verdict>
 ): Omit<Suggestion, "id">[] {
   const out: Omit<Suggestion, "id">[] = [];
   for (const note of notes) {
-    const fits = verdicts.get(note.id);
-    if (!fits) continue;
+    const verdict = verdicts.get(note.id);
+    if (!verdict) continue;
     const has = new Set(note.tags || []);
     for (const tag of checked.filter((tag) => !isMnemo(tag))) {
-      const earned = fits.find((f) => f.tag === tag);
+      const earned = verdict.fits.find((f) => f.tag === tag);
       if (earned && !has.has(tag)) out.push({ ...blank, kind: "add", tag, recording_id: note.id, why: earned.why, source: "tidy" });
+      const dropped = verdict.drops.find((d) => d.tag === tag);
       const given = (note.tag_why || {})[tag] === "";
-      if (!earned && has.has(tag) && !given) out.push({ ...blank, kind: "remove", tag, recording_id: note.id, source: "tidy" });
+      if (dropped && !earned && has.has(tag) && !given) out.push({ ...blank, kind: "remove", tag, recording_id: note.id, why: dropped.why, source: "tidy" });
     }
   }
   return out;

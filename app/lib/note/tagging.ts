@@ -186,25 +186,60 @@ const FileReply = z.object({
 /** A tagging reply as read: nothing in it trusted until `keepFitting()`. */
 export type Reply = z.infer<typeof FileReply>;
 
+const Dropped = z.object({ tag: z.unknown(), reason: z.unknown() });
+
 const CheckReply = z.object({
-  notes: z.array(z.object({ id: z.unknown(), tags: z.array(Judged).catch([]) })).catch([]),
+  notes: z.array(z.object({ id: z.unknown(), tags: z.array(Judged).catch([]), drop: z.array(Dropped).catch([]) })).catch([]),
 });
+
+/** One note read again: the tags that fit, each with its quote, and the ones it carries that do not, each with the reason. */
+export interface Verdict {
+  fits: Earned[];
+  drops: Earned[];
+}
 
 /** How much text one re-check call reads before the next batch. */
 const BATCH_CHARS = 120_000;
 
 /**
- * Which of `tags` fit each note, read again. The verdict on `tags` only: a
- * note's other tags are not in question. Notes the model skipped come back
- * with nothing, so a re-check can only remove what it read.
+ * A re-check reply as read: the tags that fit (`keepFitting()`), and a tag the
+ * note carries that does not, only with a reason and never one that also
+ * fits. Silence about a tag is no verdict on it.
+ */
+export function keepVerdict(
+  said: { tags?: Reply["tags"]; drop?: { tag?: unknown; reason?: unknown }[] },
+  has: string[],
+  tags: OwnTag[],
+  text: string,
+  subjects: string[]
+): Verdict {
+  const fits = keepFitting({ tags: said.tags ?? [] }, tags, text, { subjects, asked: new Set() }).tags;
+  const checked = new Set(tags.map((tag) => tag.name));
+  const drops: Earned[] = [];
+  for (const item of said.drop || []) {
+    const tag = normalizeSegment(String(item.tag ?? ""));
+    const why = String(item.reason ?? "").trim().slice(0, 300);
+    if (!why || !checked.has(tag) || !has.includes(tag) || isMnemo(tag)) continue;
+    if (fits.some((f) => f.tag === tag) || drops.some((d) => d.tag === tag)) continue;
+    drops.push({ tag, why });
+  }
+  return { fits, drops };
+}
+
+/**
+ * Which of `tags` fit each note, read again, and which of those it carries
+ * do not and why. The verdict on `tags` only: a note's other tags are not in
+ * question. A note the model skipped, or a reply that cannot be read, gets no
+ * verdict at all, so a re-check only asks about what it read.
  */
 export async function checkNotes(
-  notes: { id: string; text: string }[],
+  notes: { id: string; text: string; has: string[] }[],
   tags: OwnTag[],
   opts: { subjects: string[]; ctx: CostContext }
-): Promise<Map<string, Earned[]>> {
-  const out = new Map<string, Earned[]>();
+): Promise<Map<string, Verdict>> {
+  const out = new Map<string, Verdict>();
   if (tags.length === 0) return out;
+  const names = new Set(tags.map((tag) => tag.name));
   const batches: (typeof notes)[] = [[]];
   let size = 0;
   for (const note of notes) {
@@ -226,15 +261,19 @@ export async function checkNotes(
 
 ${JUDGE}
 
-Return JSON only: {"notes":[{"id":"…","tags":[{"tag":"…","weight":"main|part|mention","quote":"…"}]}]}`,
-        `\n\nTAGS:\n${tagLines(tags)}\n\nNOTES:\n${batch.map((n) => `=== id: ${n.id}\n${n.text}`).join("\n\n")}`,
+Each note lists the tags it carries now ("carries"). One of those that does not fit goes in "drop" with the reason in one plain sentence: what the note is about instead. Drop a tag only when you are sure; when unsure, leave it out of both lists.
+
+Return JSON only, every note once: {"notes":[{"id":"…","tags":[{"tag":"…","weight":"main|part|mention","quote":"…"}],"drop":[{"tag":"…","reason":"…"}]}]}`,
+        `\n\nTAGS:\n${tagLines(tags)}\n\nNOTES:\n${batch
+          .map((n) => `=== id: ${n.id}\ncarries: ${n.has.filter((tag) => names.has(tag)).join(", ") || "none of these"}\n${n.text}`)
+          .join("\n\n")}`,
       ],
       json: true,
     });
     const read = readJson(reply, CheckReply);
     for (const note of batch) {
       const said = read?.notes.find((n) => String(n.id) === note.id);
-      out.set(note.id, keepFitting({ tags: said?.tags ?? [] }, tags, note.text, { subjects: opts.subjects, asked: new Set() }).tags);
+      if (said) out.set(note.id, keepVerdict(said, note.has, tags, note.text, opts.subjects));
     }
   }
   return out;
