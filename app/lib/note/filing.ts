@@ -76,6 +76,17 @@ export function normalizeTags(tags: string[]): string[] {
   return [...seen];
 }
 
+/**
+ * Tags the system reads as rules, not topics: a story the person lived, a
+ * quote, anything they define. Filing never adds, merges, retires or
+ * re-checks one; only the person puts one on a note or takes it off.
+ */
+export const MNEMO = "mnemo-";
+
+export function isMnemo(tag: string): boolean {
+  return tag.startsWith(MNEMO);
+}
+
 /** Where journal entries are tagged: `journal`, `deník`. */
 export const JOURNAL = { en: "journal", cs: "deník" } as const;
 

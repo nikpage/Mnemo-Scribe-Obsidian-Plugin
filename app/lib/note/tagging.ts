@@ -4,7 +4,7 @@ import { z } from "zod";
 import { generate, readJson } from "@/lib/ai/call";
 import type { CostContext } from "@/lib/ai/cost";
 import { type Lang, LANGUAGE_NAMES } from "@/lib/i18n";
-import { normalizeSegment, singular } from "@/lib/note/filing";
+import { isMnemo, normalizeSegment, singular } from "@/lib/note/filing";
 import { canParent, parentsOf } from "@/lib/note/tag-tree";
 
 /**
@@ -94,35 +94,38 @@ export function ownWord(tag: string, parent: string): boolean {
 /**
  * What survives of a filing reply: only the person's tags, each with a
  * sentence really in the note; only new tags never asked about before, not
- * barred, each with a sentence and a meaning.
+ * barred, each with a sentence and a meaning. A `mnemo-` tag that fits is a
+ * question on the note (`asks`), never a tag, and the model never makes one.
  */
 export function keepFitting(
   reply: { tags?: Reply["tags"]; proposed?: Reply["proposed"] },
   own: OwnTag[],
   text: string,
   opts: { subjects: string[]; asked: Set<string> }
-): { tags: Earned[]; proposed: Proposal[] } {
+): { tags: Earned[]; proposed: Proposal[]; asks: Earned[] } {
   const names = new Set(own.map((tag) => tag.name));
   const tags: Earned[] = [];
+  const asks: Earned[] = [];
   for (const item of reply.tags || []) {
     const tag = normalizeSegment(String(item.tag ?? ""));
     const why = String(item.quote ?? "").trim();
     // A note that only mentions what a tag means is not about it.
     if (item.weight !== "main" && item.weight !== "part") continue;
     if (!names.has(tag) || barred(tag, opts.subjects) || !quoted(why, text)) continue;
-    if (!tags.some((t) => t.tag === tag)) tags.push({ tag, why });
+    const into = isMnemo(tag) ? asks : tags;
+    if (!into.some((t) => t.tag === tag)) into.push({ tag, why });
   }
   const proposed: Proposal[] = [];
   for (const item of reply.proposed || []) {
     const tag = normalizeSegment(String(item.tag ?? ""));
     const why = String(item.quote ?? "").trim();
     const meaning = String(item.meaning ?? "").trim();
-    if (!tag || names.has(tag) || opts.asked.has(tag) || barred(tag, opts.subjects)) continue;
+    if (!tag || isMnemo(tag) || names.has(tag) || opts.asked.has(tag) || barred(tag, opts.subjects)) continue;
     if (!meaning || !quoted(why, text) || proposed.some((p) => p.tag === tag)) continue;
     const parent = normalizeSegment(String(item.parent ?? ""));
-    proposed.push({ tag, meaning, parent: names.has(parent) && !ownWord(tag, parent) ? parent : null, why });
+    proposed.push({ tag, meaning, parent: names.has(parent) && !isMnemo(parent) && !ownWord(tag, parent) ? parent : null, why });
   }
-  return { tags, proposed };
+  return { tags, proposed, asks };
 }
 
 function tagLines(own: OwnTag[]): string {
@@ -132,7 +135,7 @@ function tagLines(own: OwnTag[]): string {
 /** How a tag is judged against a note, the same for one note and for many. */
 const JUDGE = `A tag fits only when the note is really about what the tag means. Judge by each tag's meaning, not its name: a word from the name appearing in the note proves nothing.
 
-For every tag you consider, say how much of the note is about it — "main" (what the note is about), "part" (a real part of it), or "mention" (named in passing, as background, about someone else) — and copy a quote: one sentence, or a run of at least five words, copied character for character from the note. Never explain, paraphrase or summarise in the quote: if you cannot copy words that show it, the tag does not fit. A note can fit several tags or none; none is a fine answer.`;
+For every tag you consider, say how much of the note is about it — "main" (what the note is about), "part" (a real part of it), or "mention" (named in passing, as background, about someone else) — and copy a quote: one sentence, or a run of at least five words, copied character for character from the note. Never explain, paraphrase or summarise in the quote: if you cannot copy words that show it, the tag does not fit. A note can fit several tags or none; none is a fine answer. A tag starting "mnemo-" says what kind of material the note is (a story the person lived, someone's exact words…), not what it is about: it fits only when the whole note, or a story told in it, is that kind.`;
 
 const FILE_RULES = (lang: Lang) => `Decide which of this person's tags fit a note.
 
@@ -150,9 +153,9 @@ export async function tagNote(
   note: { text: string },
   own: OwnTag[],
   opts: { lang: Lang; subjects: string[]; asked: Set<string>; ctx: CostContext }
-): Promise<{ tags: Earned[]; proposed: Proposal[] }> {
+): Promise<{ tags: Earned[]; proposed: Proposal[]; asks: Earned[] }> {
   const text = note.text.slice(0, NOTE_CHARS);
-  if (!text.trim()) return { tags: [], proposed: [] };
+  if (!text.trim()) return { tags: [], proposed: [], asks: [] };
   const reply = await generate({
     model: MODEL,
     operation: "tag-check",
@@ -267,6 +270,8 @@ export interface TagSummary {
  * gathers at least two top-level tags.
  */
 export function keepPlan(reply: z.infer<typeof PlanReply>, tags: TagSummary[], opts: { subjects: string[]; asked: Set<string> }): Plan {
+  // A `mnemo-` tag is the person's alone: no tidy-up names one, in any part of the plan.
+  tags = tags.filter((t) => !isMnemo(t.name)).map((t) => ({ ...t, parents: t.parents.filter((p) => !isMnemo(p)) }));
   const names = new Set(tags.map((t) => t.name));
   const name = (raw: unknown) => normalizeSegment(String(raw ?? ""));
   const words = (raw: unknown) => String(raw ?? "").trim();
@@ -306,7 +311,7 @@ export function keepPlan(reply: z.infer<typeof PlanReply>, tags: TagSummary[], o
   for (const g of reply.groups) {
     const tag = name(g.tag);
     const meaning = words(g.meaning);
-    if (!tag || !meaning || names.has(tag) || opts.asked.has(tag) || barred(tag, opts.subjects) || groups.some((h) => h.tag === tag)) continue;
+    if (!tag || !meaning || isMnemo(tag) || names.has(tag) || opts.asked.has(tag) || barred(tag, opts.subjects) || groups.some((h) => h.tag === tag)) continue;
     const children = [...new Set(g.children.map(name))].filter((c) => living.has(c) && !above.has(c) && !gathered.has(c) && !ownWord(c, tag));
     if (children.length < 2) continue;
     children.forEach((c) => gathered.add(c));

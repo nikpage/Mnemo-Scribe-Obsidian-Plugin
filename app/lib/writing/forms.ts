@@ -50,6 +50,8 @@ export interface FormRow {
   conventions: string | null;
   voice_id: string | null;
   base_key: string | null;
+  /** Only on the person's own (`082`): a built-in type says it here in code. */
+  fiction: boolean;
 }
 
 /** The longest a form's or a voice's text may be: a piece's background grows with the work. */

@@ -146,7 +146,7 @@ export function usePieceChoice() {
   const at = form.indexOf(":");
   const [kind, value] = [form.slice(0, at), form.slice(at + 1)];
   const ownForm = kind === "id" ? own.find((f) => f.id === value) : undefined;
-  const fiction = kind === "key" && Boolean(BUILT_IN_FORMS.find((f) => f.id === value)?.fiction);
+  const fiction = kind === "key" ? Boolean(BUILT_IN_FORMS.find((f) => f.id === value)?.fiction) : Boolean(ownForm?.fiction);
   const list = voices.data?.voices ?? [];
   const most = list.reduce<VoiceRow | undefined>((best, v) => (v.examples > (best?.examples ?? 0) ? v : best), undefined);
   const voice = picked || ownForm?.voice_id || most?.id || "none";
@@ -520,11 +520,11 @@ export function PieceView({ id, big = false, written }: { id: string; big?: bool
 
       {piece.stage === "piece" && piece.status === "done" && piece.piece && unkept.length > 0 && (
         <section className="mt-6 space-y-3">
-          <Notice tone="primary">{t("pieceUnkept", { list: unkept.join(", ") })}</Notice>
+          <Notice tone="primary">{shaped ? t("pieceUnkept", { list: unkept.join(", ") }) : t("pieceQuotesChanged", { list: unkept.map((q) => `“${q}”`).join(", ") })}</Notice>
           <Button size="sm" tip={t("tipPieceChecked")} disabled={busy} onClick={() => void checked()}>
             {t("pieceChecked")}
           </Button>
-          {shapeAgain}
+          {shaped && shapeAgain}
         </section>
       )}
 

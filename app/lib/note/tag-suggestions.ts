@@ -3,9 +3,10 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { claim, release } from "@/lib/ai/claim";
 import { noteText } from "@/lib/note/build";
-import { normalizeSegment, normalizeTags, singular } from "@/lib/note/filing";
+import { isMnemo, normalizeSegment, normalizeTags, singular } from "@/lib/note/filing";
 import { primaryLanguage } from "@/lib/note/language";
 import { READ } from "@/lib/note/shelf";
+import { storyMeaning } from "@/lib/note/stories";
 import { loadSubjects } from "@/lib/note/subjects";
 import { canParent, parentsOf } from "@/lib/note/tag-tree";
 import { type Earned, type OwnTag, type Proposal, type TagSummary, barred, checkNotes, planTags, quoted, tagNote } from "@/lib/note/tagging";
@@ -125,23 +126,50 @@ export async function turnedDown(admin: Admin, userId: string): Promise<(Pick<Su
   return rows.map((s) => ({ ...s, notes: s.notes.flatMap((n) => (title.has(n.id) ? [title.get(n.id)!] : [])) }));
 }
 
-/** The new tags asked about for one note, whatever else needs them: shown on the note itself. */
-export async function noteQuestions(admin: Admin, userId: string, noteId: string): Promise<{ id: string; tag: string; meaning: string | null; parent: string; why: string; notes: number }[]> {
-  const { data } = await admin
-    .from("tag_suggestions")
-    .select("id, tag, target, meaning, notes")
-    .eq("user_id", userId)
-    .eq("state", "open")
-    .eq("kind", "new")
-    .contains("notes", [{ id: noteId }]);
-  return ((data || []) as Pick<Suggestion, "id" | "tag" | "target" | "meaning" | "notes">[]).map((s) => ({
-    id: s.id,
-    tag: s.tag,
-    meaning: s.meaning,
-    parent: s.target,
-    why: s.notes.find((n) => n.id === noteId)?.why ?? "",
-    notes: s.notes.length,
-  }));
+/**
+ * The new tags asked about for one note, whatever else needs them, and the
+ * `mnemo-` tags asked about on it alone (`story`): shown on the note itself.
+ */
+export async function noteQuestions(
+  admin: Admin,
+  userId: string,
+  noteId: string
+): Promise<{ id: string; tag: string; meaning: string | null; parent: string; why: string; notes: number; story?: true }[]> {
+  const [{ data }, { data: stories }, { data: note }] = await Promise.all([
+    admin.from("tag_suggestions").select("id, tag, target, meaning, notes").eq("user_id", userId).eq("state", "open").eq("kind", "new").contains("notes", [{ id: noteId }]),
+    admin.from("tag_suggestions").select("id, tag, why").eq("user_id", userId).eq("state", "open").eq("kind", "add").eq("recording_id", noteId).like("tag", "mnemo-%"),
+    admin.from("recordings").select("tags").eq("user_id", userId).eq("id", noteId).maybeSingle(),
+  ]);
+  const has = new Set((note?.tags as string[] | null) || []);
+  const meanings = new Map((await loadTagRows(admin, userId)).map((r) => [r.name, r.meaning]));
+  const lang = await primaryLanguage(admin, userId);
+  return [
+    ...((data || []) as Pick<Suggestion, "id" | "tag" | "target" | "meaning" | "notes">[]).map((s) => ({
+      id: s.id,
+      tag: s.tag,
+      meaning: s.meaning,
+      parent: s.target,
+      why: s.notes.find((n) => n.id === noteId)?.why ?? "",
+      notes: s.notes.length,
+    })),
+    ...((stories || []) as Pick<Suggestion, "id" | "tag" | "why">[])
+      .filter((s) => !has.has(s.tag))
+      .map((s) => ({ id: s.id, tag: s.tag, meaning: storyMeaning(s.tag, lang) ?? meanings.get(s.tag) ?? null, parent: "", why: s.why ?? "", notes: 1, story: true as const })),
+  ];
+}
+
+/**
+ * The `mnemo-` tags that seem to fit a note, asked on that note at once and
+ * never put on it unasked: each is the person's to keep or skip, note by
+ * note. Never throws: a question lost costs a question, never the note.
+ */
+export async function askOnNote(admin: Admin, userId: string, noteId: string, asks: Earned[]): Promise<void> {
+  const rows = asks.filter((a) => isMnemo(a.tag)).map((a) => ({ ...blank, kind: "add" as const, tag: a.tag, recording_id: noteId, why: a.why, source: "model" as const }));
+  try {
+    await ask(admin, userId, rows);
+  } catch (err) {
+    console.error("Story tag question not saved (non-fatal):", err);
+  }
 }
 
 /**
@@ -155,7 +183,7 @@ export async function proposeThemeTags(admin: Admin, userId: string, themes: { e
   const skipped = await skippedNames(admin, userId);
   for (const theme of themes) {
     const tag = normalizeSegment(theme.tag?.name ?? "");
-    if (!tag || own.has(tag) || skipped.has(tag) || barred(tag, subjects)) continue;
+    if (!tag || isMnemo(tag) || own.has(tag) || skipped.has(tag) || barred(tag, subjects)) continue;
     for (const noteId of theme.evidence) {
       await proposeTags(admin, userId, noteId, [{ tag, meaning: theme.tag!.meaning, parent: null, why: "" }], "tidy");
     }
@@ -402,7 +430,8 @@ export async function tidy(admin: Admin, userId: string, runId: string): Promise
   await admin.from("tag_suggestions").update({ state: "skipped" }).eq("user_id", userId).eq("kind", "meaning").eq("state", "open");
   const notes = await readableNotes(admin, userId);
   const inUse = [...new Set(notes.flatMap((n) => n.tags || []))];
-  const own = await ownTags(admin, userId, inUse);
+  // A `mnemo-` tag is the person's alone: never given a meaning, merged, retired or moved here.
+  const own = (await ownTags(admin, userId, inUse)).filter((tag) => !isMnemo(tag.name));
   // A note with one tag is marked, and listed first, so the plan says where it would go.
   const alone = notes.filter((n) => (n.tags || []).length === 1);
   const ref = new Map(alone.map((n, i) => [n.id, `n${i + 1}`]));
@@ -486,7 +515,8 @@ export async function recheck(admin: Admin, userId: string, runId: string): Prom
   for (let round = 0; round < 3; round++) {
     const notes = await readableNotes(admin, userId);
     const own = await ownTags(admin, userId, [...new Set(notes.flatMap((n) => n.tags || []))]);
-    const due = own.filter((tag) => tag.meaning && tag.meaning !== tag.checked);
+    // A `mnemo-` tag is never re-checked: only the person adds or removes one.
+    const due = own.filter((tag) => tag.meaning && tag.meaning !== tag.checked && !isMnemo(tag.name));
     if (due.length === 0) break;
     const verdicts = await checkNotes(
       notes.map((n) => ({ id: n.id, text: noteText(n) })),
@@ -552,7 +582,7 @@ export function changesFrom(
     const fits = verdicts.get(note.id);
     if (!fits) continue;
     const has = new Set(note.tags || []);
-    for (const tag of checked) {
+    for (const tag of checked.filter((tag) => !isMnemo(tag))) {
       const earned = fits.find((f) => f.tag === tag);
       if (earned && !has.has(tag)) out.push({ ...blank, kind: "add", tag, recording_id: note.id, why: earned.why, source: "tidy" });
       const given = (note.tag_why || {})[tag] === "";
