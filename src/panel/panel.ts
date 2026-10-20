@@ -8,7 +8,8 @@ import type { Host, Shown } from "./host";
 import { type Key, type Lang, type Vars, t as say } from "./strings";
 import { addStyle } from "./style";
 import { installTips, tipOf } from "@/lib/tooltip";
-import { OPEN_BRAIN } from "@/components/home-dashboard";
+import { type BrainStart, OPEN_BRAIN } from "@/components/home-dashboard";
+import type { AskStart } from "@/components/what-next";
 
 /**
  * Scribe beside the notes, the same in every app that holds them. Brain,
@@ -102,8 +103,8 @@ export class Panel {
     this.tabs = el("div", root, { cls: "scribe-tabs", attrs: { role: "tablist" } });
     this.status = el("span", root, { cls: "scribe-status" });
     this.body = el("div", root);
-    // The home screen's "Open Your Brain".
-    root.addEventListener(OPEN_BRAIN, () => void this.show("brain"));
+    // Search's Ask: the Brain tab opens on the question typed.
+    root.addEventListener(OPEN_BRAIN, (event) => void this.show("brain", (event as CustomEvent<BrainStart | undefined>).detail?.ask));
   }
 
   private t(key: Key, vars?: Vars) {
@@ -191,7 +192,7 @@ export class Panel {
     }
   }
 
-  async show(tab: Tab) {
+  async show(tab: Tab, ask?: AskStart) {
     this.tab = tab;
     this.drawTabs();
     const api = this.host.api();
@@ -220,7 +221,7 @@ export class Panel {
     this.unmount = null;
     this.body.replaceChildren(next);
     if (screen && api)
-      this.unmount = mountScreen(next, screen, { noteId: this.shown?.scribeId ?? null, open: (id) => this.host.open(id), away: (path) => this.host.link(api.url(path)) });
+      this.unmount = mountScreen(next, screen, { noteId: this.shown?.scribeId ?? null, ask, open: (id) => this.host.open(id), away: (path) => this.host.link(api.url(path)) });
   }
 
   // — Connect ——————————————————————————————————————————————————

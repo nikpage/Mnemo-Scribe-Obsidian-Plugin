@@ -1,7 +1,7 @@
 "use client";
 
 // [Guru]
-import { useMemo, useState } from "react";
+import { type ReactNode, useMemo, useState } from "react";
 import { ApiError, allAnswered, answeredNow, send, useApi } from "@/lib/api";
 import { useCounts } from "@/hooks/use-notes-page";
 import { tagsByUse } from "@/lib/note/notes-page";
@@ -11,10 +11,11 @@ import { formatDate, formatFactDate } from "@/lib/format";
 import { readingSections } from "@/lib/note/reading-sections";
 import { EVERYTHING, type Kind, type Narrow, type Scope, type Trail, dropTag, flipTag, liveNarrow, monthsBefore, readingOf, startOf, subjectOf } from "@/lib/note/what-next-target";
 import { type LibraryRow, askedOf, kindOf } from "@/lib/note/brain-library";
+import { webSetHref } from "@/lib/note/web-set";
 import Link from "next/link";
 import { Plus } from "lucide-react";
 import { tipOf } from "@/lib/tooltip";
-import { Button, Chip, Cost, Input, Options, Pill } from "@/components/ui";
+import { Button, Chip, Cost, Heading, Input, Notice, Options, Pill, buttonClass } from "@/components/ui";
 import { NoteSection } from "@/components/note-section";
 import { Additions, PressButton, Prose, type Quote, ReadingProse, Sections, type Spent, SpentLine, type Under } from "@/components/reading-prose";
 
@@ -22,12 +23,19 @@ type Status = "running" | "done" | "failed";
 type Row = { id: string; target: string; part: string | null; status: Status; reading: string | null; created_at: string; notes?: number | null; spent?: Spent };
 type Answer = { reading: Row | null; failed: "failed" | "declined" | null; more: Row[] };
 type Suggestion = { label: string; subject: string; jobs: Kind[] };
+/** What the Brain is asked for: a reading of one kind, or one question answered. */
+type Job = Kind | "ask";
+/** A written answer as the server holds it while it is written and after. */
+type Asked = { status: Status; answer: string | null; declined: boolean; spent?: Spent };
+
+/** A question brought from Search: its words and the filters it was typed under. */
+export type AskStart = { q: string; tags: string[]; from: string | null; language: string | null; actions: boolean };
 
 /** The jobs in the order they are offered, each named by what the person is about to do. */
 const JOBS: Kind[] = ["inspiration", "next-best", "study", "log"];
-export const JOB_LABEL = { picture: "jobPicture", inspiration: "jobInspiration", "next-best": "jobNextBest", study: "jobStudy", log: "jobLog" } as const;
+export const JOB_LABEL = { ask: "jobAsk", picture: "jobPicture", inspiration: "jobInspiration", "next-best": "jobNextBest", study: "jobStudy", log: "jobLog" } as const;
 /** What each job hands back, in a line under its name: said from what its prompt asks for. */
-const JOB_WHAT = { picture: "jobPictureWhat", inspiration: "jobInspirationWhat", "next-best": "jobNextBestWhat", study: "jobStudyWhat", log: "jobLogWhat" } as const;
+const JOB_WHAT = { ask: "jobAskWhat", picture: "jobPictureWhat", inspiration: "jobInspirationWhat", "next-best": "jobNextBestWhat", study: "jobStudyWhat", log: "jobLogWhat" } as const;
 
 /** How far back the notes go: a few spans, or dates picked. */
 const WHENS = ["any", "month", "3m", "year", "pick"] as const;
@@ -79,7 +87,7 @@ function useReading(scope: Scope, asked: string, open: boolean) {
         const fresh = await requote();
         setNote(t("priceChanged", { n: fresh?.credits ?? "?" }));
       } else {
-        setNote(t(status === 402 ? "outOfCredits" : status === 429 ? "whatNextUsedUp" : status === 409 ? "whatNextBusy" : "whatNextFailed"));
+        setNote(t(status === 402 ? "outOfCredits" : status === 409 ? "whatNextBusy" : "whatNextFailed"));
       }
     } finally {
       releasePage();
@@ -88,6 +96,51 @@ function useReading(scope: Scope, asked: string, open: boolean) {
   }
 
   return { data, reading, done, writing, pressed, press, elaborateQuote, message: note ?? failed };
+}
+
+/**
+ * One question answered from the notes, the notes found by meaning within
+ * the filters given, quoting the notes it used: priced before the press
+ * (`search/quote`), written on the server after the press's request has
+ * ended (`ask-background`) and asked for every 2 s until it lands.
+ */
+function useAsk(on: boolean) {
+  const { t } = useLang();
+  const quote = useApi<{ credits: number; balance: number }>(on ? "/api/notes/search/quote" : null);
+  const [pressing, setPressing] = useState(false);
+  const [askId, setAskId] = useState<string | null>(null);
+  const [asked, setAsked] = useState("");
+  const [note, setNote] = useState<string | null>(null);
+  const answering = useApi<Asked>(askId ? `/api/notes/search/ask?id=${askId}` : null, {
+    refreshInterval: (latest) => (latest?.status === "running" ? 2000 : 0),
+  }).data;
+  const asking = pressing || Boolean(askId && (!answering || answering.status === "running"));
+  const done = answering?.status === "done" ? answering : null;
+  const failed = answering?.status === "failed" ? t("whatNextFailed") : done?.declined ? t("aiDeclinedAsk") : null;
+
+  /** Asks `body.q` at the price shown; a changed price is shown instead and nothing runs. */
+  async function press(body: { q: string; tags: string[]; from: string | null; to: string | null; language: string | null; actions: boolean }) {
+    setPressing(true);
+    setAskId(null);
+    setNote(null);
+    setAsked(body.q);
+    // Off Netlify the work happens inside this request; a reload would lose it.
+    const releasePage = busyUntilDone();
+    try {
+      const credits = quote.data?.credits;
+      const { askId: id } = await send<{ askId: string }>("/api/notes/search/ask", "POST", { ...body, ...(credits != null ? { credits } : {}) });
+      setAskId(id);
+    } catch (err) {
+      const status = err instanceof ApiError ? err.status : 0;
+      if (status === 412) setNote(t("priceChanged", { n: (await quote.mutate())?.credits ?? "?" }));
+      else setNote(t(status === 402 ? "outOfCredits" : status === 409 ? "whatNextBusy" : "whatNextFailed"));
+    } finally {
+      releasePage();
+      setPressing(false);
+    }
+  }
+
+  return { price: quote.data, asking, asked, done, message: note ?? failed, press };
 }
 
 /** The reading itself, each heading with its Elaborate at its price. */
@@ -217,7 +270,7 @@ export function AddNew({ reading, writing, onPressed }: { reading: { id: string;
         const fresh = await quote.mutate();
         setNote(t("priceChanged", { n: fresh?.credits ?? "?" }));
       } else {
-        setNote(t(status === 402 ? "outOfCredits" : status === 429 ? "whatNextUsedUp" : status === 409 ? "whatNextBusy" : "whatNextFailed"));
+        setNote(t(status === 402 ? "outOfCredits" : status === 409 ? "whatNextBusy" : "whatNextFailed"));
       }
     } finally {
       releasePage();
@@ -276,17 +329,19 @@ export function WhatNext({ scope, target = "" }: { scope: "overview" | "tags" | 
 
 /**
  * The Brain for the store: its tags on offer, most used first, and centred
- * on `centreId` when a note is open. The app's Brain panel and the plugins'
- * Brain tab are both this, drawn once all is in. `links` is false where the
- * app's own pages are not reachable (a note app's panel).
+ * on `centreId` when a note is open, or on `ask`, a question brought from
+ * Search. The app's Brain panel and the plugins' Brain tab are both this,
+ * drawn once all is in. `map` offers "Pick on the map" (the app's panel);
+ * `links` is false where the app's own pages are not reachable (a note app's
+ * panel).
  */
-export function BrainOf({ within, struck, alone, centreId, of, pick, links = true }: { within?: string[]; struck?: string[]; alone?: boolean; centreId?: string; of?: { id: string; title: string }; pick?: Trail; links?: boolean }) {
+export function BrainOf({ within, struck, alone, centreId, of, pick, ask, map = false, links = true }: { within?: string[]; struck?: string[]; alone?: boolean; centreId?: string; of?: { id: string; title: string }; pick?: Trail; ask?: AskStart; map?: boolean; links?: boolean }) {
   const counts = useCounts();
   const centre = useApi<{ recordings: { id: string; path: string }[] }>(centreId ? `/api/recordings?ids=${centreId}` : null);
   const tags = useMemo(() => tagsByUse(counts.data?.sets ?? []), [counts.data]);
   if (!allAnswered(counts, centreId ? centre : { data: null })) return null;
   const here = centre.data?.recordings[0];
-  return <BrainReading tags={tags} within={within} struck={struck} alone={alone} centre={here ? { id: here.id, title: here.path } : undefined} of={of} pick={pick} links={links} />;
+  return <BrainReading tags={tags} within={within} struck={struck} alone={alone} centre={here ? { id: here.id, title: here.path } : undefined} of={of} pick={pick} ask={ask} map={map} links={links} />;
 }
 
 /**
@@ -299,7 +354,8 @@ export function useWhich(start: { narrow: Narrow; struck: string[] }) {
   const [narrow, setNarrow] = useState<Narrow>(start.narrow);
   // Tags struck through: still shown, narrowing nothing, until they are tapped back or removed.
   const [struck, setStruck] = useState<string[]>(start.struck);
-  const [when, setWhen] = useState<When>("any");
+  // A start with dates (a question brought from Search) starts on them, picked.
+  const [when, setWhen] = useState<When>(start.narrow.from || start.narrow.to ? "pick" : "any");
   return { topics, setTopics, narrow, setNarrow, struck, setStruck, when, setWhen, live: liveNarrow(narrow, struck) };
 }
 
@@ -309,9 +365,12 @@ export type Which = ReturnType<typeof useWhich>;
  * The pills of `which`, each with its ×, then the dates and "Add": topics
  * suggested or typed, and the person's `tags`. `centre` and `of` name the
  * note and the Brain output the notes start from. `alone` offers "Only these
- * notes"; a piece never reads elsewhere, so New piece leaves it out.
+ * notes"; a piece never reads elsewhere, so New piece leaves it out. `ask`
+ * keeps to what a question can be asked within: tags it carries and dates,
+ * with `extra` pills (Search's own filters). `map` is where "Pick on the map"
+ * leads.
  */
-export function WhichNotes({ which, tags, centre, of, alone = true }: { which: Which; tags: string[]; centre?: { id: string; title: string }; of?: { id: string; title: string }; alone?: boolean }) {
+export function WhichNotes({ which, tags, centre, of, alone = true, ask = false, extra = [], map }: { which: Which; tags: string[]; centre?: { id: string; title: string }; of?: { id: string; title: string }; alone?: boolean; ask?: boolean; extra?: ReactNode[]; map?: string }) {
   const { lang, t } = useLang();
   const { topics, setTopics, narrow, setNarrow, struck, setStruck, when, setWhen, live } = which;
   const [open, setOpen] = useState<"add" | "when" | null>(null);
@@ -320,7 +379,7 @@ export function WhichNotes({ which, tags, centre, of, alone = true }: { which: W
 
   const q = query.trim().toLowerCase();
   const chosen = new Set([...narrow.only, ...narrow.not]);
-  const offeredTopics = (suggested?.suggestions ?? []).filter((s) => !topics.includes(s.subject) && s.label.toLowerCase().includes(q));
+  const offeredTopics = ask ? [] : (suggested?.suggestions ?? []).filter((s) => !topics.includes(s.subject) && s.label.toLowerCase().includes(q));
   const offeredTags = tags.filter((tag) => !chosen.has(tag) && tag.includes(q));
 
   // Add stays open: several topics and tags are picked in one go.
@@ -348,38 +407,39 @@ export function WhichNotes({ which, tags, centre, of, alone = true }: { which: W
   return (
     <>
       <div className="flex flex-wrap items-center gap-2">
-        {centre && narrow.centre && (
+        {!ask && centre && narrow.centre && (
           <Pill onRemove={() => setNarrow({ ...narrow, centre: undefined })} removeLabel={t("brainRemove")} tip={t("tipBrainCentre")} removeTip={t("tipBrainRemove")}>
             {t("brainCentre", { name: centre.title })}
           </Pill>
         )}
-        {of && narrow.of && (
+        {!ask && of && narrow.of && (
           <Pill onRemove={() => setNarrow({ ...narrow, of: undefined })} removeLabel={t("brainRemove")} tip={t("tipBrainOf")} removeTip={t("tipBrainRemove")}>
             {t("brainOf", { name: of.title })}
           </Pill>
         )}
-        {narrow.pick && (
+        {!ask && narrow.pick && (
           <Pill onRemove={() => setNarrow({ ...narrow, pick: undefined })} removeLabel={t("brainRemove")} tip={t("tipBrainTrail")} removeTip={t("tipBrainRemove")}>
             {t("brainTrail", { n: narrow.pick.notes.length + narrow.pick.tags.length })}
           </Pill>
         )}
-        {topics.map((topic) => (
+        {!ask && topics.map((topic) => (
           <Pill key={topic} onRemove={() => setTopics(topics.filter((x) => x !== topic))} removeLabel={t("brainRemove")} tip={t("tipBrainTopic")} removeTip={t("tipBrainRemove")}>
             {t("brainAbout", { name: topic })}
           </Pill>
         ))}
-        {[...narrow.only, ...narrow.not].map((tag) => (
+        {(ask ? narrow.only : [...narrow.only, ...narrow.not]).map((tag) => (
           struck.includes(tag) ? (
             <Pill key={tag} onClick={() => setStruck(struck.filter((x) => x !== tag))} onRemove={() => { setStruck(struck.filter((x) => x !== tag)); setNarrow(dropTag(narrow, tag)); }} removeLabel={t("brainRemove")} tip={t("tipBrainStruck")} removeTip={t("tipBrainRemove")}>
               <s>{t(narrow.only.includes(tag) ? "brainWith" : "brainWithout", { tag })}</s>
             </Pill>
           ) : (
-            <Pill key={tag} onClick={() => setNarrow(flipTag(narrow, tag))} onRemove={() => setStruck([...struck, tag])} removeLabel={t("brainStrike")} tip={t("tipBrainFlip")} removeTip={t("tipBrainStrike")}>
+            <Pill key={tag} onClick={ask ? undefined : () => setNarrow(flipTag(narrow, tag))} onRemove={() => setStruck([...struck, tag])} removeLabel={t("brainStrike")} tip={t(ask ? "tipBrainAskTag" : "tipBrainFlip")} removeTip={t("tipBrainStrike")}>
               {t(narrow.only.includes(tag) ? "brainWith" : "brainWithout", { tag })}
             </Pill>
           )
         ))}
-        {topics.length === 0 && live.only.length + live.not.length === 0 && !narrow.of && !narrow.pick && <span className="text-xs">{t("brainEverything")}</span>}
+        {extra}
+        {(ask ? live.only.length + extra.length === 0 : topics.length === 0 && live.only.length + live.not.length === 0 && !narrow.of && !narrow.pick) && <span className="text-xs">{t("brainEverything")}</span>}
         {when === "any" ? (
           <Chip on={open === "when"} aria-expanded={open === "when"} tip={t("tipBrainWhenOpen")} onClick={() => setOpen(open === "when" ? null : "when")}>
             {whenLabel}
@@ -393,7 +453,12 @@ export function WhichNotes({ which, tags, centre, of, alone = true }: { which: W
           <Plus className="h-3 w-3" aria-hidden />
           {t("brainAdd")}
         </Chip>
-        {alone && (
+        {map && (
+          <Link href={map} data-tip={t("tipBrainMap")} className={`${buttonClass("secondary", "sm")} text-xs`}>
+            {t("brainMap")}
+          </Link>
+        )}
+        {alone && !ask && (
           <Chip on={!!narrow.alone} aria-pressed={!!narrow.alone} tip={t("tipBrainAlone")} onClick={() => setNarrow({ ...narrow, alone: !narrow.alone })}>
             {t("brainAlone")}
           </Chip>
@@ -432,14 +497,18 @@ export function WhichNotes({ which, tags, centre, of, alone = true }: { which: W
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Enter" && query.trim()) about(query.replace(/\s+/g, " ").trim());
+              // A question is asked within tags, never about a topic: Enter takes the first tag on offer.
+              if (e.key === "Enter" && query.trim()) {
+                if (!ask) about(query.replace(/\s+/g, " ").trim());
+                else if (offeredTags[0]) addTag(offeredTags[0]);
+              }
               if (e.key === "Escape") setOpen(null);
             }}
             placeholder={t("brainAddField")}
             maxLength={200}
           />
           <div className="flex max-h-40 flex-wrap gap-2 overflow-y-auto">
-            {query.trim() && <Chip tip={t("tipBrainTyped")} onClick={() => about(query.replace(/\s+/g, " ").trim())}>{t("brainAboutTyped", { q: query.trim() })}</Chip>}
+            {!ask && query.trim() && <Chip tip={t("tipBrainTyped")} onClick={() => about(query.replace(/\s+/g, " ").trim())}>{t("brainAboutTyped", { q: query.trim() })}</Chip>}
             {offeredTopics.map((s) => (
               <Chip key={s.label} tip={t("tipBrainSuggested")} onClick={() => about(s.subject)}>
                 {s.label}
@@ -459,7 +528,8 @@ export function WhichNotes({ which, tags, centre, of, alone = true }: { which: W
 
 /**
  * The Brain, read top to bottom as one sentence: what the person wants, from
- * which notes, at what price. The notes start as all of them (or the tags of
+ * which notes, at what price. The first choice is a question answered from
+ * the notes (Ask), the rest are readings. The notes start as all of them (or the tags of
  * the view it was opened on, or centred on the note open then) and each thing
  * added shows as a pill with its ×. Every choice is a reading, so the press
  * always carries its price and how many notes it reads. Nothing from before
@@ -475,6 +545,8 @@ export function BrainReading({
   centre,
   of,
   pick,
+  ask,
+  map = false,
   links = true,
 }: {
   tags: string[];
@@ -488,24 +560,37 @@ export function BrainReading({
   of?: { id: string; title: string };
   /** Starts on the Web's trail: those notes and the notes carrying those tags. */
   pick?: Trail;
+  /** Starts on Ask, this question and the filters it was typed under. */
+  ask?: AskStart;
+  /** Offers "Pick on the map": the Web on the tags chosen. */
+  map?: boolean;
   /** False where the app's own pages are not reachable. */
   links?: boolean;
 }) {
   const { lang, t } = useLang();
-  const [job, setJob] = useState<Kind>("picture");
-  const [start] = useState(() => startOf(within, { struck: struckAtStart, alone, centre: centre?.id, of: of?.id, pick }));
+  const [job, setJob] = useState<Job>(ask ? "ask" : "picture");
+  const [start] = useState(() => {
+    const begun = startOf(ask ? ask.tags : within, { struck: struckAtStart, alone, centre: centre?.id, of: of?.id, pick });
+    return ask?.from ? { ...begun, narrow: { ...begun.narrow, from: ask.from.slice(0, 10) } } : begun;
+  });
   const which = useWhich(start);
   const { topics, live } = which;
   const [asked, setAsked] = useState<{ scope: Scope; target: string } | null>(null);
+  const [question, setQuestion] = useState(ask?.q ?? "");
+  // Search's own filters, kept until their × takes them away.
+  const [language, setLanguage] = useState(ask?.language ?? null);
+  const [actions, setActions] = useState(ask?.actions ?? false);
+  const asking = useAsk(job === "ask");
+  const q = question.replace(/\s+/g, " ").trim();
 
   const reading = useReading(asked?.scope ?? "overview", asked?.target ?? "", asked !== null);
   const { data: library } = useApi<{ readings: LibraryRow[] }>("/api/notes/what-next?library=1");
   const latest = (library?.readings ?? []).slice(0, LATEST);
-  const choice = { kind: job, topics, narrow: live };
+  const choice = { kind: job === "ask" ? "picture" : job, topics, narrow: live };
   const wanted = readingOf(choice, centre?.title);
   // Priced on stand-in words: the wording never changes the price, so typing asks nothing.
   const priced = readingOf({ ...choice, topics: topics.length ? ["topic"] : [] }, "topic");
-  const quote = useApi<Quote>(quoteUrl(priced.scope, priced.target), { keepPreviousData: true });
+  const quote = useApi<Quote>(job === "ask" ? null : quoteUrl(priced.scope, priced.target), { keepPreviousData: true });
   // The price of what is chosen now: nothing, its slot held, while a changed choice is being priced.
   const price = answeredNow(quote);
   const why = price?.credits != null ? t("costReading", { n: price.credits, notes: price.notes ?? 0, balance: price.balance ?? 0 }) : undefined;
@@ -526,14 +611,51 @@ export function BrainReading({
     <div className="space-y-5">
       <section className="space-y-2">
         <h3 className="text-sm font-semibold">{t("brainWant")}</h3>
-        <Options label={t("brainWant")} value={job} onChange={setJob} options={(["picture", ...JOBS] as Kind[]).map((kind) => ({ value: kind, label: t(JOB_LABEL[kind]), hint: t(JOB_WHAT[kind]) }))} />
+        <Options label={t("brainWant")} value={job} onChange={setJob} options={(["ask", "picture", ...JOBS] as Job[]).map((kind) => ({ value: kind, label: t(JOB_LABEL[kind]), hint: t(JOB_WHAT[kind]) }))} />
       </section>
+
+      {job === "ask" && (
+        <section className="space-y-2">
+          <h3 className="text-sm font-semibold">{t("brainQuestion")}</h3>
+          <Input data-tip={t("tipBrainQuestion")} value={question} onChange={(e) => setQuestion(e.target.value)} placeholder={t("brainQuestionField")} maxLength={2000} />
+        </section>
+      )}
 
       <section className="space-y-2">
         <h3 className="text-sm font-semibold">{t("brainWhich")}</h3>
-        <WhichNotes which={which} tags={tags} centre={centre} of={of} />
+        <WhichNotes
+          which={which}
+          tags={tags}
+          centre={centre}
+          of={of}
+          ask={job === "ask"}
+          map={map ? (live.only.length ? webSetHref({ live: live.only, struck: [] }) : "/web") : undefined}
+          extra={
+            job === "ask"
+              ? [
+                  language && (
+                    <Pill key="language" onRemove={() => setLanguage(null)} removeLabel={t("brainRemove")} tip={t("tipBrainFromSearch")} removeTip={t("tipBrainRemove")}>
+                      {t(language === "cs" ? "filterCzech" : "filterEnglish")}
+                    </Pill>
+                  ),
+                  actions && (
+                    <Pill key="actions" onRemove={() => setActions(false)} removeLabel={t("brainRemove")} tip={t("tipBrainFromSearch")} removeTip={t("tipBrainRemove")}>
+                      {t("filterActions")}
+                    </Pill>
+                  ),
+                ].filter(Boolean)
+              : []
+          }
+        />
       </section>
 
+      {job === "ask" ? (
+        <AskPress
+          asking={asking}
+          question={q}
+          onPress={() => void asking.press({ q, tags: live.only, from: live.from || null, to: live.to || null, language, actions })}
+        />
+      ) : (
       <section className="space-y-1">
         <Button
           variant="primary"
@@ -552,9 +674,10 @@ export function BrainReading({
         </p>
         {reading.message && <p className="text-xs text-muted-foreground">{reading.message}</p>}
       </section>
+      )}
 
-      {asked && <ReadingBody reading={reading} label={labelOf(asked.scope, asked.target)} />}
-      {asked && links && reading.done && (
+      {job !== "ask" && asked && <ReadingBody reading={reading} label={labelOf(asked.scope, asked.target)} />}
+      {job !== "ask" && asked && links && reading.done && (
         <Link href={writeFrom(reading.done.id)} data-tip={t("tipPieceFromNotes")} className="mb-4 block text-xs text-primary hover:underline">
           {t("pieceFromNotes")} →
         </Link>
@@ -565,7 +688,10 @@ export function BrainReading({
           <ul className="space-y-1">
             {latest.map((r) => (
               <li key={r.id}>
-                <Button variant="link" size="sm" className="text-left" tip={t("tipBrainEarlier")} onClick={() => setAsked({ scope: r.scope, target: r.target })}>
+                <Button variant="link" size="sm" className="text-left" tip={t("tipBrainEarlier")} onClick={() => {
+                    if (job === "ask") setJob(kindOf(r.scope, r.target));
+                    setAsked({ scope: r.scope, target: r.target });
+                  }}>
                   {r.title || labelOf(r.scope, r.target)} · {t(JOB_LABEL[kindOf(r.scope, r.target)])} · {formatDate(r.created_at, lang)}
                 </Button>
               </li>
@@ -574,6 +700,38 @@ export function BrainReading({
         </NoteSection>
       )}
     </div>
+  );
+}
+
+/**
+ * Ask's press, at its price, and the answer under it once written: from the
+ * notes only, quoting them. An answer stays while its question is unchanged.
+ */
+function AskPress({ asking, question, onPress }: { asking: ReturnType<typeof useAsk>; question: string; onPress: () => void }) {
+  const { t } = useLang();
+  const { price, done } = asking;
+  const why = price ? t("costAsk", { n: price.credits, balance: price.balance }) : undefined;
+  const ready = question.length >= 3;
+  return (
+    <>
+      <section className="space-y-1">
+        <Button variant="primary" disabled={asking.asking || !ready || !price} tip={tipOf(t("tipBrainAsk"), why)} onClick={onPress}>
+          {asking.asking ? t("asking") : t("askNotes")}
+          <Cost credits={price?.credits} why={why} />
+        </Button>
+        <p className="min-h-4 text-xs text-muted-foreground">{ready && price?.credits ? why : ""}</p>
+        {asking.message && <p className="text-xs text-muted-foreground">{asking.message}</p>}
+      </section>
+      {done && !done.declined && asking.asked === question && (
+        <div data-answer>
+          <Notice tone="primary" className="mb-4">
+            <Heading className="text-primary">{t("answerFrom")}</Heading>
+            <p className="whitespace-pre-wrap">{done.answer ?? t("searchNoResults")}</p>
+            <SpentLine spent={done.spent} />
+          </Notice>
+        </div>
+      )}
+    </>
   );
 }
 

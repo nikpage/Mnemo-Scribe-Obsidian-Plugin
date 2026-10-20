@@ -12,6 +12,7 @@ import { canParent, parentsOf } from "@/lib/note/tag-tree";
 import { type Earned, type OwnTag, type Proposal, type TagSummary, barred, checkNotes, planTags, quoted, tagNote } from "@/lib/note/tagging";
 import { addParents, applyVocabulary, withParents, joinKnown, loadTagRows, loadVocabulary, rememberTags } from "@/lib/note/vocabulary";
 import { recordEvidence } from "@/lib/theories";
+import { startBackground } from "@/lib/background";
 
 /**
  * Everything the app asks before it changes a tag, and what happens when the
@@ -650,23 +651,14 @@ export async function startRun(admin: Admin, userId: string, kind: "tidy" | "rec
     await release(admin, userId, TAGS_CLAIM);
     return null;
   }
-  if (process.env.SITE_ID) {
-    const started = await fetch(new URL("/.netlify/functions/tags-background", base), {
-      method: "POST",
-      headers: { "x-cron-key": process.env.CRON_SECRET ?? "" },
-      body: JSON.stringify({ runId: run.id }),
-    }).catch((err: unknown) => err);
-    if (!(started instanceof Response) || started.status !== 202) {
-      await admin
-        .from("tag_runs")
-        .update({ status: "failed", error: "background function did not start" })
-        .eq("user_id", userId)
-        .eq("id", run.id);
-      await release(admin, userId, TAGS_CLAIM);
-      return null;
-    }
-  } else {
-    await runTags(admin, run.id);
+  if (!(await startBackground("tags-background", { runId: run.id }, base, () => runTags(admin, run.id)))) {
+    await admin
+      .from("tag_runs")
+      .update({ status: "failed", error: "background function did not start" })
+      .eq("user_id", userId)
+      .eq("id", run.id);
+    await release(admin, userId, TAGS_CLAIM);
+    return null;
   }
   return run.id;
 }

@@ -6,17 +6,19 @@ import Link from "next/link";
 import { ChevronRight } from "lucide-react";
 import { useLang } from "@/hooks/use-lang";
 import { send, useApi } from "@/lib/api";
-import { JOB_LABEL, ReadingText } from "@/components/what-next";
+import { type AskStart, JOB_LABEL, ReadingText } from "@/components/what-next";
 import { formatCount, formatDate } from "@/lib/format";
 import { NoteRow } from "@/components/note-row";
 import { NoteLink } from "@/components/note-link";
 import { Button, Heading, List, Notice } from "@/components/ui";
 import { EVERYTHING, subjectOf, type Scope } from "@/lib/note/what-next-target";
+import { reportHref } from "@/lib/note/brain-library";
 import type { Home } from "@/lib/note/home";
 import type { Todo } from "@/lib/note/todos";
 
 /**
- * The first screen: what is waiting on the person, the open to-dos (tick one
+ * The first screen: what is waiting on the person, this week's report's
+ * headlines, the open to-dos (tick one
  * off, say which note it led to or none), how much is in the store, the
  * newest of what Brain wrote and the notes added last. One free read
  * (`/api/notes/home`); nothing on it calls a model. The app and the plugins
@@ -25,6 +27,8 @@ import type { Todo } from "@/lib/note/todos";
 
 /** Asks the shell to show Brain (an event that bubbles up): the app opens its sheet, a plugin its tab. */
 export const OPEN_BRAIN = "scribe:open-brain";
+/** What the Brain opens on, carried by OPEN_BRAIN: a question from Search's Ask, or nothing. */
+export type BrainStart = { ask?: AskStart };
 
 const SHOWN = 8;
 const READINGS_SHOWN = 2;
@@ -98,7 +102,9 @@ export function HomeDashboard({ links = true }: { links?: boolean }) {
   const done = Object.values(ticked);
   const openCount = open.length;
 
-  const waiting = data.needs.tags > 0 || data.needs.report;
+  const waiting = data.needs.tags > 0;
+  // This week's report, when it is written: its headlines on a card of their own.
+  const report = data.needs.report ? data.insights : [];
 
   const noteOf = (todo: Todo) => ({ id: todo.noteId, path: todo.title.replace(/\.md$/i, "") });
   const titled = (todo: Todo) => (
@@ -162,14 +168,6 @@ export function HomeDashboard({ links = true }: { links?: boolean }) {
                 ) : (
                   <p className="font-medium">{t("homeTagQuestions", { n: data.needs.tags })}</p>
                 ))}
-              {data.needs.report &&
-                (links ? (
-                  <Link href="/insights" data-tip={t("tipReportReady")} className="block font-medium text-primary hover:underline">
-                    {t("reportReady")} →
-                  </Link>
-                ) : (
-                  <p className="font-medium">{t("reportReady")}</p>
-                ))}
             </div>
           ) : (
             <>
@@ -190,6 +188,26 @@ export function HomeDashboard({ links = true }: { links?: boolean }) {
       </>
     )}
   </section>
+
+      {report.length > 0 && (
+        <section data-report>
+          <Heading>{t("homeReport")}</Heading>
+          <Notice tone="primary" className="space-y-1 text-sm">
+            <ul className="space-y-1">
+              {report.map((insight) => (
+                <li key={insight.headline} className="font-medium">
+                  {insight.headline}
+                </li>
+              ))}
+            </ul>
+            {links && (
+              <Link href={reportHref(report[0].week)} data-tip={t("tipHomeReport")} className="block text-primary hover:underline">
+                {t("libraryReport", { week: formatDate(report[0].week, lang) })} →
+              </Link>
+            )}
+          </Notice>
+        </section>
+      )}
 
       <section>
         <Heading>{t("homeTodos")}</Heading>

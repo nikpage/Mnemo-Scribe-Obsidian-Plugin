@@ -71,3 +71,15 @@ export async function release(
 
   if (error) console.error(`Releasing ${kind} failed:`, error);
 }
+
+/** Whether a claim taken with `ttlMs` is held now: the work it marks is under way. */
+export async function held(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  admin: SupabaseClient<any, any, any>,
+  userId: string,
+  kind: string,
+  ttlMs: number
+): Promise<boolean> {
+  const { data } = await admin.from("ai_claims").select("claimed_at").eq("user_id", userId).eq("kind", kind).maybeSingle();
+  return Boolean(data && Date.now() - Date.parse((data as { claimed_at: string }).claimed_at) < ttlMs);
+}

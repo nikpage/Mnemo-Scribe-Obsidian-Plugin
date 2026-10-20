@@ -84,7 +84,6 @@ export type Quote = { credits: number | null; balance: number | null; notes?: nu
 /** One of the day's suggested topics, with the jobs its notes support. */
 export type Suggestion = { label: string; subject: string; jobs: string[] };
 
-export type Answer = { answer: string | null; cited: { id: string; label: string }[]; noCredits?: boolean; declined?: boolean; priceChanged?: number; spent?: Spent };
 export type Theme = { id: string; name: string; body: string };
 export type Subject = { id: string; name: string; archived?: boolean; notes: number };
 export type SubjectNote = { id: string; label: string; recorded_at: string };
@@ -343,20 +342,6 @@ export class ScribeApi {
       method: "POST",
       body: { scope, target, ...(more || {}), ...(credits === null ? {} : { credits }) },
     });
-  }
-
-  /** What a written answer will cost, free. */
-  quoteAsk(): Promise<Quote> {
-    return this.call<Quote>("/api/notes/search/quote");
-  }
-
-  /** A written answer from the notes at `credits`, the price shown; each [n] in it is `cited[n - 1]`. */
-  async ask(question: string, credits: number | null): Promise<Answer> {
-    const params = new URLSearchParams({ q: question, fuzzy: "1", answer: "1", ...(credits === null ? {} : { credits: String(credits) }) });
-    const result = await this.call<Answer>(`/api/notes/search?${params}`);
-    if (result.noCredits) throw new OutOfCredits();
-    if (result.priceChanged !== undefined) throw new PriceChanged(result.priceChanged);
-    return { ...result, cited: result.cited || [] };
   }
 
   async facts(id: string): Promise<Fact[]> {

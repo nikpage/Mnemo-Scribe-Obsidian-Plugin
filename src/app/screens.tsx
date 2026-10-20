@@ -5,7 +5,7 @@ import { createRoot } from "react-dom/client";
 import { SWRConfig } from "swr";
 import { useCounts } from "@/hooks/use-notes-page";
 import { SearchProvider } from "@/hooks/use-search";
-import { BrainOf } from "@/components/what-next";
+import { type AskStart, BrainOf } from "@/components/what-next";
 import { SearchPane } from "@/components/panes/search";
 import { NoteAbout } from "@/components/note-about";
 import { HomeDashboard } from "@/components/home-dashboard";
@@ -16,7 +16,7 @@ import { ShellContext } from "./shell";
 
 /**
  * The app's own screens in the panel: Home is the app's home dashboard, Brain its Brain panel, Write
- * its `/write` pages, Search its Search pane (Ask included), Web its web of tags, This note what its
+ * its `/write` pages, Search its Search pane (Ask opening Brain), Web its web of tags, This note what its
  * note screen shows beside a note. Built from the app's files; only the parts, the requests
  * and the links are this app's (`./ui`, `./http`, `./link`), so a change to
  * a screen in the app is the same change here.
@@ -27,6 +27,8 @@ export type Screen = "home" | "brain" | "write" | "search" | "web" | "note";
 export type ScreenHost = {
   /** The Scribe note open in this app, if any. */
   noteId: string | null;
+  /** A question brought from Search's Ask, which the Brain opens on. */
+  ask?: AskStart;
   /** Opens a Scribe note in this app; an error in words, or null. */
   open(id: string): Promise<string | null>;
   /** Opens one of the app's pages (Settings) in the browser. */
@@ -64,7 +66,7 @@ function Screens({ screen, host }: { screen: Screen; host: ScreenHost }) {
       {screen === "home" ? (
         <HomeDashboard links={false} />
       ) : screen === "brain" ? (
-        <BrainOf key={host.noteId ?? ""} centreId={host.noteId ?? undefined} links={false} />
+        <BrainOf key={`${host.noteId ?? ""}|${host.ask?.q ?? ""}`} centreId={host.noteId ?? undefined} ask={host.ask} links={false} />
       ) : screen === "write" ? (
         <Write at={write} />
       ) : screen === "search" ? (

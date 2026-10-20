@@ -15,6 +15,47 @@ import { type BrainRef, joinsOf } from "@/lib/note/walk-brain";
 /** One reading as the library lists it: no text, only what names and sorts it; `fresh` the notes come in since it last read. */
 export type LibraryRow = { id: string; scope: Scope; target: string; created_at: string; title: string; notes: number; fresh?: number };
 
+/** A row of the library: a reading, or (with `week`) one week's report, `headlines` its insights' headlines. */
+export type ShelfRow = LibraryRow & { week?: string; headlines?: string[] };
+
+/** What the library can be kept to: one Brain function, or the weekly reports. */
+export type ShelfKind = Kind | "report";
+
+/** A week's report as its own page names it. */
+export const reportHref = (week: string) => `/brain/report/${week}`;
+
+/**
+ * Everything the library lists: the readings, then each week's report as one
+ * row, dated its Monday, counting the notes its insights rest on. The reports
+ * are listed here only; Search and the Web reach a report as the note it is
+ * saved as.
+ */
+export function libraryRows(readings: LibraryRow[], insights: { week_start: string; headline: string; evidence: string[] | null }[]): ShelfRow[] {
+  const weeks = new Map<string, { headlines: string[]; notes: Set<string> }>();
+  for (const i of insights) {
+    const week = weeks.get(i.week_start) ?? { headlines: [], notes: new Set<string>() };
+    week.headlines.push(i.headline);
+    for (const id of i.evidence ?? []) week.notes.add(id);
+    weeks.set(i.week_start, week);
+  }
+  const reports: ShelfRow[] = [...weeks].map(([week, { headlines, notes }]) => ({
+    id: `report-${week}`,
+    scope: "overview",
+    target: "",
+    created_at: `${week}T07:00:00.000Z`,
+    title: "",
+    notes: notes.size,
+    week,
+    headlines,
+  }));
+  return [...readings, ...reports];
+}
+
+/** The function a library row was: a report, else its reading's. */
+export function shelfKindOf(row: ShelfRow): ShelfKind {
+  return row.week ? "report" : kindOf(row.scope, row.target);
+}
+
 /**
  * Text as a quote is compared: case, curly quotes, dashes and runs of
  * whitespace are how a faithful copy still differs from its source, so they
@@ -75,9 +116,9 @@ export function readingTitle(row: { title: string | null; reading: string | null
 }
 
 /** The library in the order asked for, only the function asked for when one is. */
-export function arrange(rows: LibraryRow[], sort: Sort, kind: Kind | null): LibraryRow[] {
-  const shown = kind ? rows.filter((r) => kindOf(r.scope, r.target) === kind) : rows;
-  const newest = (a: LibraryRow, b: LibraryRow) => b.created_at.localeCompare(a.created_at);
+export function arrange(rows: ShelfRow[], sort: Sort, kind: ShelfKind | null): ShelfRow[] {
+  const shown = kind ? rows.filter((r) => shelfKindOf(r) === kind) : rows;
+  const newest = (a: ShelfRow, b: ShelfRow) => b.created_at.localeCompare(a.created_at);
   return [...shown].sort(sort === "oldest" ? (a, b) => newest(b, a) : sort === "notes" ? (a, b) => b.notes - a.notes || newest(a, b) : newest);
 }
 

@@ -9,18 +9,15 @@ import { factMeta } from "@/lib/note/fact-line";
 import { useCounts } from "@/hooks/use-notes-page";
 import { tagsByUse } from "@/lib/note/notes-page";
 import { ShowMore } from "@/components/note-pages";
-import { searchParams, useSearch } from "@/hooks/use-search";
-import { api, useApi } from "@/lib/api";
+import { useSearch } from "@/hooks/use-search";
+import { useApi } from "@/lib/api";
 import type { FactHit } from "@/lib/note/fact-line";
 import { noteName, normalizeTags } from "@/lib/note/filing";
 import { NoteRow } from "@/components/note-row";
 import { BrainHits } from "@/components/what-next";
-import { SpentLine } from "@/components/reading-prose";
-
-type Spent = { costUsd: number; readTokens: number; wroteTokens: number };
+import { type BrainStart, OPEN_BRAIN } from "@/components/home-dashboard";
 import { NoteShortcuts } from "@/components/note-shortcuts";
-import { tipOf } from "@/lib/tooltip";
-import { Button, Chip, Cost, Heading, Input, List, Notice, selectClass } from "@/components/ui";
+import { Button, Chip, Heading, Input, List, Notice, selectClass } from "@/components/ui";
 
 /** How far back a search looks. Days, or everything. */
 const RANGES = { any: 0, week: 7, month: 30, year: 365 } as const;
@@ -35,9 +32,9 @@ function since(range: Range): string | null {
 
 /**
  * Finding a note. Typing is free: words matched against the store, and the
- * facts already read out of it. Searching by meaning and asking for a
- * written answer each cost a model call, so each is a button, never a
- * keystroke.
+ * facts already read out of it. Searching by meaning costs a model call, so
+ * it is a button, never a keystroke; Ask opens the Brain on the question
+ * typed and these filters, where the answer is priced and written.
  */
 export function SearchPane() {
   const { t, lang } = useLang();
@@ -56,12 +53,6 @@ export function SearchPane() {
   const [actionsOnly, setActionsOnly] = useState(false);
   // Cold storage and Trash are searched only here, by words, never by the AI.
   const [where, setWhere] = useState<"" | "cold" | "trash">("");
-  const [answer, setAnswer] = useState<string | null>(null);
-  const [declined, setDeclined] = useState(false);
-  const [noCredits, setNoCredits] = useState(false);
-  const [asking, setAsking] = useState(false);
-  const [priceChanged, setPriceChanged] = useState<number | null>(null);
-  const [spent, setSpent] = useState<Spent | undefined>(undefined);
   // What the store already knows about the words being typed. The one
   // request a keystroke may make: rows read when each note completed, so no
   // model, no embedding and nothing billed.
@@ -91,37 +82,16 @@ export function SearchPane() {
     }).data?.facts ?? [];
   const shownFacts = trimmed.length >= 3 && !where ? facts : [];
 
-  // An answer's price, asked once a question is long enough to ask: it moves
-  // with the store, never with the words typed.
-  const { data: price, mutate: requote } = useApi<{ credits: number; balance: number }>(trimmed.length >= 3 ? "/api/notes/search/quote" : null);
-  const askWhy = price ? t("costAsk", { n: price.credits, balance: price.balance }) : undefined;
-
-  // A new question clears the last written answer.
-  const [answeredFor, setAnsweredFor] = useState("");
-
   // The tags on offer are the ones the store actually uses, most used first.
   const tags = tagsByUse(counts?.sets ?? []);
 
   const pinned = (counts?.pinned ?? []).map((n) => ({ id: n.id, path: n.path, label: noteName(n.path, n.label) }));
 
-  // The written answer carries the same filters as the search it is asked
-  // of, and finds its notes by meaning as well — it is already a billed press.
-  async function ask() {
-    const p = searchParams(trimmed, { tags: tagFilters, from, language, actionsOnly });
-    p.set("answer", "1");
-    p.set("fuzzy", "1");
-    setAsking(true);
-    setAnswer(null);
-    if (price?.credits != null) p.set("credits", String(price.credits));
-    const data = await api<{ answer?: string; declined?: boolean; noCredits?: boolean; priceChanged?: number; spent?: Spent }>(`/api/notes/search?${p}`).catch(() => null);
-    setSpent(data?.spent);
-    if (data?.priceChanged !== undefined) await requote();
-    setPriceChanged(data?.priceChanged ?? null);
-    setAnswer(data?.answer || null);
-    setDeclined(Boolean(data?.declined));
-    setNoCredits(Boolean(data?.noCredits));
-    setAnsweredFor(trimmed);
-    setAsking(false);
+  // The question goes to the Brain with the filters it was typed under; the
+  // answer is priced and written there.
+  function ask(event: React.MouseEvent<HTMLButtonElement>) {
+    const start: BrainStart = { ask: { q: trimmed, tags: tagFilters, from, language: language || null, actions: actionsOnly } };
+    event.currentTarget.dispatchEvent(new CustomEvent(OPEN_BRAIN, { bubbles: true, detail: start }));
   }
 
   return (
@@ -197,18 +167,6 @@ export function SearchPane() {
         </Notice>
       )}
 
-      {declined && answeredFor === trimmed && <Notice className="mb-4">{t("aiDeclinedAsk")}</Notice>}
-      {noCredits && answeredFor === trimmed && <Notice className="mb-4">{t("outOfCredits")}</Notice>}
-      {priceChanged !== null && answeredFor === trimmed && <Notice className="mb-4">{t("priceChanged", { n: priceChanged })}</Notice>}
-
-      {answer && answeredFor === trimmed && (
-        <Notice tone="primary" className="mb-4">
-          <Heading className="text-primary">{t("answerFrom")}</Heading>
-          <p className="whitespace-pre-wrap">{answer}</p>
-          <SpentLine spent={spent} />
-        </Notice>
-      )}
-
       {!active ? (
         // Before a word is typed, the two shortest routes back to a note.
         <div>
@@ -236,22 +194,19 @@ export function SearchPane() {
           )}
           {!fuzzy && !where && brain.length > 0 && <BrainHits rows={brain} />}
 
-          {/* The two paid ways further, after the free answer has been seen. */}
+          {/* The two ways further, after the free answer has been seen. */}
           {!where && (
             <div className="mt-4 flex flex-wrap gap-2">
               <Button tip={t("tipSearchMeaning")} onClick={runFuzzy} disabled={fuzzying || fuzzy}>
                 {fuzzying ? t("fuzzying") : t("searchByMeaning")}
               </Button>
               {trimmed.length >= 3 && (
-                <Button tip={tipOf(t("tipSearchAsk"), askWhy)} onClick={ask} disabled={asking}>
-                  {asking ? t("asking") : t("askNotes")}
-                  <Cost credits={price?.credits} why={askWhy} />
+                <Button tip={t("tipSearchAsk")} onClick={ask}>
+                  {t("askNotes")}
                 </Button>
               )}
             </div>
           )}
-          {/* The answer's price in words, where a phone can read it. */}
-          {trimmed.length >= 3 && !where && <p className="mt-1 min-h-4 text-xs text-muted-foreground">{price?.credits ? askWhy : ""}</p>}
         </>
       )}
     </div>
