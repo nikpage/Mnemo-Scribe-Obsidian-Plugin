@@ -9,7 +9,7 @@ import { READ } from "@/lib/note/shelf";
 import { storyMeaning } from "@/lib/note/stories";
 import { loadSubjects } from "@/lib/note/subjects";
 import { canParent, parentsOf } from "@/lib/note/tag-tree";
-import { type Earned, type OwnTag, type Proposal, type TagSummary, type Verdict, barred, checkNotes, planTags, quoted, tagNote } from "@/lib/note/tagging";
+import { type Earned, type OwnTag, type Proposal, type TagSummary, type Verdict, alreadyAsked, barred, checkNotes, planTags, quoted, tagNote } from "@/lib/note/tagging";
 import { addParents, applyVocabulary, withParents, joinKnown, loadTagRows, loadVocabulary, rememberTags } from "@/lib/note/vocabulary";
 import { recordEvidence } from "@/lib/theories";
 import { startBackground } from "@/lib/background";
@@ -185,7 +185,7 @@ export async function proposeThemeTags(admin: Admin, userId: string, themes: { e
   const skipped = await skippedNames(admin, userId);
   for (const theme of themes) {
     const tag = normalizeSegment(theme.tag?.name ?? "");
-    if (!tag || isMnemo(tag) || own.has(tag) || skipped.has(tag) || barred(tag, subjects)) continue;
+    if (!tag || isMnemo(tag) || own.has(tag) || alreadyAsked(tag, skipped) || barred(tag, subjects)) continue;
     for (const noteId of theme.evidence) {
       await proposeTags(admin, userId, noteId, [{ tag, meaning: theme.tag!.meaning, parent: null, why: "" }], "tidy");
     }
@@ -211,7 +211,10 @@ export async function proposeTags(admin: Admin, userId: string, noteId: string, 
       .eq("user_id", userId)
       .eq("kind", "new");
     const rows = (data || []) as { id: string; tag: string; state: string; notes: { id: string; why: string }[] }[];
+    // A model's tag the person turned down in other words is not asked again; their own word still is.
+    const down = new Set(rows.filter((row) => row.state === "skipped").map((row) => row.tag));
     for (const p of proposals) {
+      if ((source === "model" || source === "tidy") && alreadyAsked(p.tag, down)) continue;
       const known = rows.find((row) => singular(row.tag) === singular(p.tag));
       if (known && known.state !== "open") continue;
       if (known) {
@@ -487,8 +490,9 @@ export async function tidy(admin: Admin, userId: string, runId: string): Promise
 /**
  * Open questions a tidy-up would no longer ask, closed: a retirement for a
  * tag now on two notes or more, and a new tag the filing rules now bar — one
- * the person has in any spelling, one nobody may hold, one without a meaning,
- * or one no readable note still quotes. A tag the person said or a folder
+ * the person has in any spelling, one they turned down in any wording
+ * (`alreadyAsked()`), one nobody may hold, one without a meaning, or one no
+ * readable note still quotes. A tag the person said or a folder
  * gave (`spoken`, `folder`) is theirs, never closed here.
  */
 async function closeStale(
@@ -506,6 +510,7 @@ async function closeStale(
     .eq("state", "open")
     .in("kind", ["retire", "new"]);
   const names = new Set(own.map((t) => singular(t.name)));
+  const down = await skippedNames(admin, userId);
   const text = new Map(notes.map((n) => [n.id, noteText(n)]));
   const stands = (s: Pick<Suggestion, "source" | "notes">) =>
     s.notes.some((n) => text.has(n.id) && ((s.source === "tidy" && !n.why) || quoted(n.why, text.get(n.id)!)));
@@ -513,7 +518,7 @@ async function closeStale(
     s.kind === "retire"
       ? !thin.has(s.tag)
       : (s.source === "model" || s.source === "tidy") &&
-        (names.has(singular(s.tag)) || barred(s.tag, subjects) || !s.meaning?.trim() || !stands(s))
+        (names.has(singular(s.tag)) || alreadyAsked(s.tag, down) || barred(s.tag, subjects) || !s.meaning?.trim() || !stands(s))
   );
   if (stale.length === 0) return;
   await admin

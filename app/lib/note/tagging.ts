@@ -81,15 +81,39 @@ export function barred(tag: string, subjects: string[]): boolean {
   return STATE_WORDS.has(tag) || subjects.some((name) => normalizeSegment(name) === tag);
 }
 
+/** The words of a tag's name, each in the singular. */
+function nameWords(name: string): string[] {
+  return name.split(/[-\s]+/).filter(Boolean).map(singular);
+}
+
+/**
+ * Whether `tag` was asked about already, or is one asked about with words
+ * added (`physical-fitness` after `fitness`): a "no" holds for every spelling
+ * that still names it.
+ */
+export function alreadyAsked(tag: string, asked: Set<string>): boolean {
+  if (asked.has(tag)) return true;
+  const words = new Set(nameWords(tag));
+  for (const name of asked) {
+    const theirs = nameWords(name);
+    if (theirs.length && theirs.every((word) => words.has(word))) return true;
+  }
+  return false;
+}
+
+/** Tags asked about before, as a prompt reads them: never offered again, not even in other words. */
+function askedLines(asked: Set<string>): string {
+  return asked.size ? `\n\nALREADY ASKED ABOUT (never propose one of these again, nor the same idea in other words): ${[...asked].sort().join(", ")}` : "";
+}
+
 /**
  * Whether `parent` is made from a word of the tag's own name (`money` over
  * `my-money`): a parent names the field a tag belongs to, never the word the
  * two share.
  */
 export function ownWord(tag: string, parent: string): boolean {
-  const words = (name: string) => name.split(/[-\s]+/).filter(Boolean).map(singular);
-  const own = new Set(words(tag));
-  return words(parent).some((word) => own.has(word));
+  const own = new Set(nameWords(tag));
+  return nameWords(parent).some((word) => own.has(word));
 }
 
 /**
@@ -121,7 +145,7 @@ export function keepFitting(
     const tag = normalizeSegment(String(item.tag ?? ""));
     const why = String(item.quote ?? "").trim();
     const meaning = String(item.meaning ?? "").trim();
-    if (!tag || isMnemo(tag) || names.has(tag) || opts.asked.has(tag) || barred(tag, opts.subjects)) continue;
+    if (!tag || isMnemo(tag) || names.has(tag) || alreadyAsked(tag, opts.asked) || barred(tag, opts.subjects)) continue;
     if (!meaning || !quoted(why, text) || proposed.some((p) => p.tag === tag)) continue;
     const parent = normalizeSegment(String(item.parent ?? ""));
     proposed.push({ tag, meaning, parent: names.has(parent) && !isMnemo(parent) && !ownWord(tag, parent) ? parent : null, why });
@@ -169,7 +193,7 @@ export async function tagNote(
     operation: "tag-check",
     ctx: opts.ctx,
     // The note's own words only: its title is the app's, never a quote.
-    parts: [FILE_RULES(opts.lang), `\n\nTHE PERSON'S TAGS:\n${tagLines(own)}${learnedLines(opts.theories)}\n\nNOTE:\n${text}`],
+    parts: [FILE_RULES(opts.lang), `\n\nTHE PERSON'S TAGS:\n${tagLines(own)}${learnedLines(opts.theories)}${askedLines(opts.asked)}\n\nNOTE:\n${text}`],
     json: true,
   });
   const read = readJson(reply, FileReply) ?? {};
@@ -358,7 +382,7 @@ export function keepPlan(reply: z.infer<typeof PlanReply>, tags: TagSummary[], o
   for (const g of reply.groups) {
     const tag = name(g.tag);
     const meaning = words(g.meaning);
-    if (!tag || !meaning || isMnemo(tag) || names.has(tag) || opts.asked.has(tag) || barred(tag, opts.subjects) || groups.some((h) => h.tag === tag)) continue;
+    if (!tag || !meaning || isMnemo(tag) || names.has(tag) || alreadyAsked(tag, opts.asked) || barred(tag, opts.subjects) || groups.some((h) => h.tag === tag)) continue;
     const children = [...new Set(g.children.map(name))].filter((c) => living.has(c) && !above.has(c) && !gathered.has(c) && !ownWord(c, tag));
     if (children.length < 2) continue;
     children.forEach((c) => gathered.add(c));
@@ -416,7 +440,7 @@ Judge the number of tags and the shape of the tree from these notes; different n
 Everything in ${LANGUAGE_NAMES[opts.lang]}. Tag names lowercase, one concept, one or two words.
 
 Return JSON only: {"meanings":[{"tag":"…","meaning":"…"}],"merges":[{"tag":"…","into":"…","why":"…"}],"parents":[{"tag":"…","parent":"…"}],"groups":[{"tag":"…","meaning":"…","children":["…"],"why":"…"}],"moves":[{"note":"n1","tag":"…"}]}`,
-      `\n\n${opts.subjects.length ? `CLIENT NAMES (never tags): ${opts.subjects.join(", ")}\n\n` : ""}TAGS:\n${lines.join("\n\n")}`,
+      `\n\n${opts.subjects.length ? `CLIENT NAMES (never tags): ${opts.subjects.join(", ")}\n\n` : ""}TAGS:\n${lines.join("\n\n")}${askedLines(opts.asked)}`,
     ],
     json: true,
   });
