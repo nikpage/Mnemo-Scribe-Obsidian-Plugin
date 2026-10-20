@@ -24,20 +24,24 @@ export type PieceRow = {
   form_key: string | null;
   form_name: string;
   voice_name: string | null;
+  spoken_id: string | null;
+  unkept: string[] | null;
   stage: "outline" | "piece";
   status: "running" | "done" | "failed";
   notes: number | null;
   created_at: string;
 };
 
-/** Where a piece is: its outline being written or waiting, the piece being written, done or failed. */
-export function pieceState(t: Translate, p: Pick<PieceRow, "stage" | "status">): string {
-  if (p.status === "running") return t(p.stage === "outline" ? "pieceOutlining" : "pieceWriting");
+/** Where a piece is: its outline being written or waiting, the piece being written or shaped, to check, done or failed. */
+export function pieceState(t: Translate, p: Pick<PieceRow, "stage" | "status" | "spoken_id" | "unkept">): string {
+  if (p.status === "running") return t(p.spoken_id ? "pieceShaping" : p.stage === "outline" ? "pieceOutlining" : "pieceWriting");
   if (p.status === "failed") return t("pieceFailedShort");
+  if (p.unkept?.length) return t("pieceCheck");
   return t(p.stage === "outline" ? "pieceOutlineReady" : "pieceDone");
 }
 
-const finished = (p: PieceRow) => p.stage === "piece" && p.status === "done";
+/** Written, and nothing in it waiting to be checked against the recording. */
+const finished = (p: PieceRow) => p.stage === "piece" && p.status === "done" && !p.unkept?.length;
 
 /** Pieces newest first, each opening on its own page; a draft says where it is. */
 function PieceList({ pieces }: { pieces: PieceRow[] }) {
@@ -66,8 +70,8 @@ function PieceList({ pieces }: { pieces: PieceRow[] }) {
 }
 
 /**
- * Write: the person's pieces, drafts (an outline waiting, being written, or
- * failed) apart from finished ones, newest first, and "New piece". One free
+ * Write: the person's pieces, drafts (an outline waiting, being written, a
+ * shaped piece to check, or failed) apart from finished ones, newest first, and "New piece". One free
  * request.
  */
 export function WriteHome() {
@@ -108,7 +112,8 @@ export function WriteHome() {
 }
 
 /**
- * New piece, one short flow: its type, its voice, what it is about, which
+ * New piece, one short flow: its type, its voice, what it is written from
+ * (a recording picked in place of the notes), what it is about, which
  * notes (the Brain's pills; `of`, a Brain output's id, starts on the notes
  * it read), what it must stay true to (folded unless a story), and under
  * More its opening words and models. One press, at the
@@ -123,7 +128,7 @@ export function NewPiece({ of }: { of?: string }) {
   const output = useApi<{ reading: { id: string; scope: Scope; target: string; title: string } }>(of ? `/api/notes/what-next?id=${encodeURIComponent(of)}` : null);
   const [start] = useState(() => startOf([], { of }));
   const which = useWhich(start);
-  if (!allAnswered(choice.voices, choice.forms, counts, of ? output : { data: null })) return <main className="p-4 md:p-6" />;
+  if (!allAnswered(choice.voices, choice.forms, choice.recordings, counts, of ? output : { data: null })) return <main className="p-4 md:p-6" />;
   const reading = output.data?.reading;
   // A Brain output gone since the link was made narrows nothing.
   const narrow = reading ? which.live : { ...which.live, of: undefined };
@@ -139,11 +144,13 @@ export function NewPiece({ of }: { of?: string }) {
       <div className="space-y-8">
         <PieceFields choice={choice} />
 
-        <section className="space-y-2">
-          <h3 className="text-sm font-semibold">{t("brainWhich")}</h3>
-          <p className="text-xs text-muted-foreground">{t("pieceNotesWhat")}</p>
-          <WhichNotes which={which} tags={tags} of={reading ? { id: reading.id, title: reading.title || readOf(t, reading.scope, reading.target) } : undefined} alone={false} />
-        </section>
+        {choice.spoken === null && (
+          <section className="space-y-2">
+            <h3 className="text-sm font-semibold">{t("brainWhich")}</h3>
+            <p className="text-xs text-muted-foreground">{t("pieceNotesWhat")}</p>
+            <WhichNotes which={which} tags={tags} of={reading ? { id: reading.id, title: reading.title || readOf(t, reading.scope, reading.target) } : undefined} alone={false} />
+          </section>
+        )}
 
         <PieceBackground choice={choice} />
 

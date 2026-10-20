@@ -166,38 +166,32 @@ async function write(row: {
   }
 }
 
+/** The token counts the SDK reports for one call. */
+export type ReportedTokens =
+  | {
+      promptTokenCount?: number;
+      candidatesTokenCount?: number;
+      cachedContentTokenCount?: number;
+      thoughtsTokenCount?: number;
+    }
+  | undefined;
+
 /**
  * A Gemini text call, priced from the token counts the SDK reports. Cached
  * tokens are part of the prompt count and priced at the cache rate.
  * Thinking is billed as output but reported apart from it; leaving it out
  * under-counted every thinking call and let the ceiling run late.
  */
-export async function recordTokenCost(
-  ctx: CostContext,
-  operation: Operation,
-  model: keyof typeof RATES,
-  usage:
-    | {
-        promptTokenCount?: number;
-        candidatesTokenCount?: number;
-        cachedContentTokenCount?: number;
-        thoughtsTokenCount?: number;
-      }
-    | undefined
-) {
+export function callCost(model: keyof typeof RATES, usage: ReportedTokens) {
   const input = usage?.promptTokenCount ?? 0;
   const output = (usage?.candidatesTokenCount ?? 0) + (usage?.thoughtsTokenCount ?? 0);
   const cached = Math.min(usage?.cachedContentTokenCount ?? 0, input);
-  await write({
-    ctx,
-    operation,
-    provider: "google",
-    model,
-    input,
-    output,
-    unit: "tokens",
-    cost: tokenCost(model, input, output, cached),
-  });
+  return { input, output, cost: tokenCost(model, input, output, cached) };
+}
+
+/** Records one Gemini text call, priced by `callCost()`. */
+export async function recordTokenCost(ctx: CostContext, operation: Operation, model: keyof typeof RATES, usage: ReportedTokens) {
+  await write({ ctx, operation, provider: "google", model, unit: "tokens", ...callCost(model, usage) });
 }
 
 /**
@@ -205,23 +199,14 @@ export async function recordTokenCost(
  * estimated at the usual four characters per token — the sums are fractions
  * of a cent either way.
  */
-export async function recordEmbeddingCost(
-  ctx: CostContext,
-  operation: Operation,
-  characters: number
-) {
-  const model = "gemini-embedding-001";
+export function embeddingCost(characters: number) {
   const input = Math.ceil(characters / 4);
-  await write({
-    ctx,
-    operation,
-    provider: "google",
-    model,
-    input,
-    output: 0,
-    unit: "tokens",
-    cost: tokenCost(model, input, 0),
-  });
+  return { input, output: 0, cost: tokenCost("gemini-embedding-001", input, 0) };
+}
+
+/** Records one embedding call, priced by `embeddingCost()`. */
+export async function recordEmbeddingCost(ctx: CostContext, operation: Operation, characters: number) {
+  await write({ ctx, operation, provider: "google", model: "gemini-embedding-001", unit: "tokens", ...embeddingCost(characters) });
 }
 
 /** A transcription, priced on the length of the audio. */

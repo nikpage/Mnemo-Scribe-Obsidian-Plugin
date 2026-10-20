@@ -6,7 +6,7 @@ import Link from "next/link";
 import { useLang } from "@/hooks/use-lang";
 import { ApiError, allAnswered, answeredNow, send, useApi } from "@/lib/api";
 import { busyUntilDone } from "@/lib/busy";
-import { formatCount, formatDate } from "@/lib/format";
+import { formatCount, formatDate, formatDuration } from "@/lib/format";
 import type { Extract } from "@/lib/note/brain-library";
 import type { Narrow } from "@/lib/note/what-next-target";
 import { BUILT_IN_FORMS, type BuiltInForm, type FormRow, TEXT_MAX, backgroundWords } from "@/lib/writing/forms";
@@ -29,6 +29,10 @@ export const PIECES = "/api/writing/pieces";
 export const QUOTE = "/api/writing/pieces/quote";
 export const VOICES = "/api/writing/voices";
 export const FORMS = "/api/writing/forms";
+export const SPOKEN = "/api/writing/spoken";
+
+/** A recording New piece can shape a piece from. */
+export type SpokenRow = { id: string; label: string | null; path: string | null; recorded_at: string; duration_seconds: number | null };
 
 export type Translate = ReturnType<typeof useLang>["t"];
 
@@ -118,14 +122,19 @@ export function MeasuresTable({ columns }: { columns: { label: string; m: Measur
 }
 
 /**
- * What a new piece is to be: its type, its voice ("none" no voice), what it
- * is about, what it must stay true to, the person's opening words if they
- * have them, and the model of each step. Until a voice is picked it is the
- * type's own, else the voice with the most examples, else none.
+ * What a new piece is to be: its type, its voice ("none" no voice), whether
+ * it is written from the person's notes or shaped from one of their
+ * recordings, what it is about, what it must stay true to, the person's
+ * opening words if they have them, and the model of each step. Until a voice
+ * is picked it is the type's own, else the voice with the most examples, else
+ * none; until a recording is picked, the latest.
  */
 export function usePieceChoice() {
   const voices = useApi<{ voices: VoiceRow[] }>(VOICES);
   const forms = useApi<{ forms: FormRow[] }>(FORMS);
+  const recordings = useApi<{ notes: SpokenRow[] }>(SPOKEN);
+  const [source, setSource] = useState<"notes" | "spoken">("notes");
+  const [pickedSpoken, setSpoken] = useState("");
   const [form, setForm] = useState(`key:${BUILT_IN_FORMS[0].id}`);
   const [picked, setVoice] = useState("");
   const [brief, setBrief] = useState("");
@@ -144,20 +153,22 @@ export function usePieceChoice() {
   // One of the person's own types with no length set can't be priced or written.
   const unsized = kind === "id" && !ownForm?.words;
   const setModel = (step: Step) => (m: WritingModel) => setModels((all) => ({ ...all, [step]: m }));
-  return { voices, forms, rows, own, form, setForm, voice, setVoice, brief, setBrief, background, setBackground, fiction, opening, setOpening, models, setModel, kind, value, unsized };
+  // Shaped from a recording: the one picked, else the latest; none when there are none.
+  const spoken = source === "spoken" ? pickedSpoken || recordings.data?.notes[0]?.id || "" : null;
+  return { voices, forms, recordings, rows, own, form, setForm, voice, setVoice, source, setSource, spoken, setSpoken, brief, setBrief, background, setBackground, fiction, opening, setOpening, models, setModel, kind, value, unsized };
 }
 
 export type PieceChoice = ReturnType<typeof usePieceChoice>;
 
-/** Where a new piece's outline is priced: everything but its words, which never change the price. */
+/** Where a new piece's first press is priced (its outline, or its shaping): everything but its words, which never change the price. */
 export function newQuoteUrl(c: PieceChoice, narrow?: Partial<Narrow>): string | null {
-  if (c.unsized) return null;
+  if (c.unsized || c.spoken === "") return null;
   const params = new URLSearchParams({
     ...(c.kind === "id" ? { formId: c.value } : { form: c.value }),
     voice: c.voice,
-    ...(narrow ? { narrow: JSON.stringify(narrow) } : {}),
+    ...(c.spoken ? { spoken: c.spoken } : narrow ? { narrow: JSON.stringify(narrow) } : {}),
     ...(c.background.trim() ? { background: String(backgroundWords(c.background)) } : {}),
-    models: JSON.stringify({ outline: c.models.outline }),
+    models: JSON.stringify(c.spoken ? { write: c.models.write } : { outline: c.models.outline }),
   });
   return `${QUOTE}?${params}`;
 }
@@ -182,8 +193,7 @@ export function useStartPiece(c: PieceChoice, requote: () => Promise<Quote | und
         voiceId: c.voice === "none" ? null : c.voice,
         brief,
         ...(c.background.trim() ? { background: c.background } : {}),
-        ...(c.opening.trim() ? { opening: c.opening } : {}),
-        ...(narrow ? { narrow } : {}),
+        ...(c.spoken ? { spoken: c.spoken } : { ...(c.opening.trim() ? { opening: c.opening } : {}), ...(narrow ? { narrow } : {}) }),
         models: c.models,
         ...(credits == null ? {} : { credits }),
       });
@@ -205,8 +215,10 @@ export function useStartPiece(c: PieceChoice, requote: () => Promise<Quote | und
 
 /**
  * A new piece's type, each with a line on what you get, the person's own
- * first; its voice; and what it is about. `links` false where Settings is
- * not at hand: no "Change types…" or "Change voices…".
+ * first; its voice; what it is written from (the person's notes, or one of
+ * their recordings shaped); and what it is about. `links` false where
+ * Settings and the recorder are not at hand: no "Change types…", "Change
+ * voices…" or "Record one now…".
  */
 export function PieceFields({ choice: c, links = true }: { choice: PieceChoice; links?: boolean }) {
   const { lang, t } = useLang();
@@ -225,6 +237,15 @@ export function PieceFields({ choice: c, links = true }: { choice: PieceChoice; 
     ...(c.voices.data?.voices ?? []).map((v) => ({ value: v.id, label: v.name, hint: t("writingExamples", { n: v.examples }) })),
     { value: "none", label: t("writingNoVoice"), hint: t("pieceNoVoiceWhat") },
   ];
+  const sources = [
+    { value: "notes" as const, label: t("pieceSourceNotes"), hint: t("pieceSourceNotesWhat") },
+    { value: "spoken" as const, label: t("pieceSourceSpoken"), hint: t("pieceSourceSpokenWhat") },
+  ];
+  const recordings = (c.recordings.data?.notes ?? []).map((r) => ({
+    value: r.id,
+    label: r.label || r.path?.split("/").pop() || formatDate(r.recorded_at, lang),
+    hint: [formatDate(r.recorded_at, lang), r.duration_seconds ? formatDuration(r.duration_seconds) : ""].filter(Boolean).join(" · "),
+  }));
   return (
     <>
       <section className="space-y-2">
@@ -241,8 +262,25 @@ export function PieceFields({ choice: c, links = true }: { choice: PieceChoice; 
       </section>
 
       <section className="space-y-2">
+        <h3 className="text-sm font-semibold">{t("pieceSource")}</h3>
+        <Options label={t("pieceSource")} value={c.source} onChange={c.setSource} options={sources} />
+      </section>
+
+      {c.spoken !== null && (
+        <section className="space-y-2">
+          <h3 className="text-sm font-semibold">{t("pieceRecording")}</h3>
+          {recordings.length ? <Options label={t("pieceRecording")} value={c.spoken} onChange={c.setSpoken} options={recordings} /> : <p className="text-xs text-muted-foreground">{t("pieceRecordingNone")}</p>}
+          {links && (
+            <Link href="/record" data-tip={t("tipPieceRecordNow")} className="inline-block text-sm text-primary hover:underline">
+              {t("pieceRecordNow")}
+            </Link>
+          )}
+        </section>
+      )}
+
+      <section className="space-y-2">
         <h3 className="text-sm font-semibold">{t("pieceBrief")}</h3>
-        <p className="text-xs text-muted-foreground">{t("pieceBriefWhat")}</p>
+        <p className="text-xs text-muted-foreground">{t(c.spoken !== null ? "pieceBriefSpokenWhat" : "pieceBriefWhat")}</p>
         <textarea value={c.brief} onChange={(e) => c.setBrief(e.target.value)} maxLength={4000} rows={4} aria-label={t("pieceBrief")} data-tip={t("tipPieceBrief")} className={inputClass()} />
       </section>
     </>
@@ -270,20 +308,23 @@ export function PieceBackground({ choice: c }: { choice: PieceChoice }) {
   );
 }
 
-/** Folded under More: the person's opening words and the model of each step. */
+/** Folded under More: the person's opening words and the model of each step; shaping a recording has one step and no opening. */
 export function PieceMore({ choice: c }: { choice: PieceChoice }) {
   const { t } = useLang();
+  const shaped = c.spoken !== null;
   return (
     <NoteSection id="piece-more" title={t("pieceMore")} hint={t("pieceMoreWhat")}>
       <div className="space-y-4">
-        <label className="block space-y-1">
-          <span className="text-sm font-medium">{t("pieceOpening")}</span>
-          <span className="block text-xs text-muted-foreground">{t("pieceOpeningWhat")}</span>
-          <textarea value={c.opening} onChange={(e) => c.setOpening(e.target.value)} maxLength={OPENING_MAX} rows={3} data-tip={t("tipPieceOpening")} className={inputClass()} />
-        </label>
-        <ModelPicker step="outline" value={c.models.outline} onChange={c.setModel("outline")} />
+        {!shaped && (
+          <label className="block space-y-1">
+            <span className="text-sm font-medium">{t("pieceOpening")}</span>
+            <span className="block text-xs text-muted-foreground">{t("pieceOpeningWhat")}</span>
+            <textarea value={c.opening} onChange={(e) => c.setOpening(e.target.value)} maxLength={OPENING_MAX} rows={3} data-tip={t("tipPieceOpening")} className={inputClass()} />
+          </label>
+        )}
+        {!shaped && <ModelPicker step="outline" value={c.models.outline} onChange={c.setModel("outline")} />}
         <ModelPicker step="write" value={c.models.write} onChange={c.setModel("write")} />
-        <ModelPicker step="edit" value={c.models.edit} onChange={c.setModel("edit")} />
+        {!shaped && <ModelPicker step="edit" value={c.models.edit} onChange={c.setModel("edit")} />}
       </div>
     </NoteSection>
   );
@@ -292,7 +333,8 @@ export function PieceMore({ choice: c }: { choice: PieceChoice }) {
 /**
  * New piece's press: the notes are the pills' `narrow`, and the topics added
  * there are what the piece is about, with the words typed in its fields. One
- * press, at the price on it, writes the outline; `onStarted` opens the piece.
+ * press, at the price on it, writes the outline, or shapes the recording
+ * picked into the whole piece; `onStarted` opens the piece.
  */
 export function WriteIt({ choice, narrow, topics, onStarted }: { choice: PieceChoice; narrow: Partial<Narrow>; topics: string[]; onStarted: (id: string) => void }) {
   const { t } = useLang();
@@ -300,21 +342,23 @@ export function WriteIt({ choice, narrow, topics, onStarted }: { choice: PieceCh
   // The price of what is chosen now: nothing, its slot held, while a changed choice is being priced.
   const price = answeredNow(quote);
   const { busy, note, start } = useStartPiece(choice, async () => (await quote.mutate()) ?? undefined);
-  const brief = [topics.join(", "), choice.brief.trim()].filter(Boolean).join("\n\n");
-  const why = price?.credits != null ? t("pieceCostOutline", { n: price.credits, notes: price.notes ?? 0, balance: price.balance ?? 0 }) : undefined;
+  const shaped = choice.spoken !== null;
+  // A shaped piece is about what was said: its words are only what the shaping should know.
+  const brief = shaped ? choice.brief.trim() : [topics.join(", "), choice.brief.trim()].filter(Boolean).join("\n\n");
+  const why = price?.credits != null ? (shaped ? t("pieceCostShape", { n: price.credits, balance: price.balance ?? 0 }) : t("pieceCostOutline", { n: price.credits, notes: price.notes ?? 0, balance: price.balance ?? 0 })) : undefined;
   return (
     <section className="space-y-2">
       <PressButton
-        label={busy ? t("pieceOutlining") : t("pieceOutline")}
-        tip={t("tipPieceOutline")}
+        label={shaped ? t(busy ? "pieceShaping" : "pieceShape") : busy ? t("pieceOutlining") : t("pieceOutline")}
+        tip={t(shaped ? "tipPieceShape" : "tipPieceOutline")}
         primary
-        disabled={busy || !brief || choice.unsized || !price}
+        disabled={busy || (shaped ? !choice.spoken : !brief) || choice.unsized || !price}
         quote={price}
         why={why}
-        onPress={() => void start(brief, narrow, price?.credits).then((id) => id && onStarted(id))}
+        onPress={() => void start(brief, shaped ? undefined : narrow, price?.credits).then((id) => id && onStarted(id))}
       />
-      {!brief && <p className="text-xs text-muted-foreground">{t("pieceBriefNeeded")}</p>}
-      {price && price.credits === null && <p className="text-xs text-muted-foreground">{t("pieceNoNotes")}</p>}
+      {!shaped && !brief && <p className="text-xs text-muted-foreground">{t("pieceBriefNeeded")}</p>}
+      {price && price.credits === null && <p className="text-xs text-muted-foreground">{t(shaped ? "pieceNoRecording" : "pieceNoNotes")}</p>}
       {note && <Notice tone="error">{note}</Notice>}
     </section>
   );
@@ -331,6 +375,10 @@ export type Piece = {
   /** Once written: its voice's measures, to set the piece beside. */
   voice_measures: Measures | null;
   opening: string | null;
+  /** The recording it is shaped from; null when written from an outline. */
+  spoken_id: string | null;
+  /** Numbers and names the shaped piece has that the recording never said, until the person checks them. */
+  unkept: string[] | null;
   stage: "outline" | "piece";
   status: "running" | "done" | "failed";
   outline: Outline | null;
@@ -353,8 +401,11 @@ export const pieceUrl = (id: string) => `${PIECES}?id=${encodeURIComponent(id)}`
  * One piece. While a stage runs it says so and asks again every 3 s. With
  * its outline written: the outline to change (kept as each field is left,
  * free), "Write it" at its price, or the outline again. Once written: the
- * piece, the passages it rested on and the notes it read. `big` heads it as
- * a page; `written` is what the page offers above a written piece.
+ * piece, the passages it rested on and the notes it read. A piece shaped
+ * from a recording has no outline: anything in it the recording never said
+ * is listed above it to check, with "Shape it again" or "They're right",
+ * and until then it is not finished. `big` heads it as a page; `written` is
+ * what the page offers above a finished piece.
  */
 export function PieceView({ id, big = false, written }: { id: string; big?: boolean; written?: (piece: { title: string; text: string }) => React.ReactNode }) {
   const { lang, t } = useLang();
@@ -368,7 +419,7 @@ export function PieceView({ id, big = false, written }: { id: string; big?: bool
   const models = { ...DEFAULT_MODELS, ...piece?.models, ...picked };
   const quoteOf = (stage: "outline" | "piece") =>
     `${QUOTE}?id=${encodeURIComponent(id)}&stage=${stage}&models=${encodeURIComponent(JSON.stringify(stage === "piece" ? { write: models.write, edit: models.edit } : { outline: models.outline }))}`;
-  const writeQuote = useApi<Quote>(ready && piece.outline ? quoteOf("piece") : null, { keepPreviousData: true });
+  const writeQuote = useApi<Quote>(ready && (piece.outline || piece.spoken_id) ? quoteOf("piece") : null, { keepPreviousData: true });
   const againQuote = useApi<Quote>(ready && piece.stage === "outline" ? quoteOf("outline") : null, { keepPreviousData: true });
   const pick = (step: Step) => (m: WritingModel) => setPicked((p) => ({ ...p, [step]: m }));
   const [draft, setDraft] = useState<Outline | null>(null);
@@ -433,6 +484,25 @@ export function PieceView({ id, big = false, written }: { id: string; big?: bool
   const priceWhy = (q: Quote | undefined, key: "pieceCostWrite" | "pieceCostOutline") =>
     q?.credits != null ? t(key, { n: q.credits, notes: q.notes ?? 0, balance: q.balance ?? 0 }) : undefined;
   const title = outline?.title || piece.title || piece.brief;
+  const shaped = Boolean(piece.spoken_id);
+  const unkept = piece.unkept ?? [];
+
+  async function checked() {
+    try {
+      await send(PIECES, "PATCH", { id, checked: true });
+      await page.mutate();
+    } catch {
+      setNote(t("saveFailed"));
+    }
+  }
+
+  /** Shape the recording again, at its price, on the model picked. */
+  const shapeAgain = (
+    <div className="mt-4 space-y-3">
+      <ModelPicker step="write" value={models.write} onChange={pick("write")} />
+      <PressButton label={busy ? t("pieceShaping") : t("pieceShapeAgain")} tip={t("tipPieceShapeAgain")} primary={piece.status === "failed"} disabled={busy} quote={writeQuote.data} why={writeQuote.data?.credits != null ? t("pieceCostShape", { n: writeQuote.data.credits, balance: writeQuote.data.balance ?? 0 }) : undefined} onPress={() => void press("piece")} />
+    </div>
+  );
 
   return (
     <div>
@@ -444,13 +514,25 @@ export function PieceView({ id, big = false, written }: { id: string; big?: bool
       <SpentLine spent={piece.spent} />
       <p className="mt-3 text-sm">{piece.brief}</p>
 
-      {piece.status === "running" && <Notice className="mt-6">{t(piece.stage === "outline" ? "pieceOutliningWhat" : "pieceWritingWhat")}</Notice>}
+      {piece.status === "running" && <Notice className="mt-6">{t(shaped ? "pieceShapingWhat" : piece.stage === "outline" ? "pieceOutliningWhat" : "pieceWritingWhat")}</Notice>}
       {piece.status === "failed" && <Notice tone="error" className="mt-6">{t(piece.error === "declined" ? "pieceDeclined" : "pieceFailed")}</Notice>}
       {note && <Notice tone="error" className="mt-4">{note}</Notice>}
 
+      {piece.stage === "piece" && piece.status === "done" && piece.piece && unkept.length > 0 && (
+        <section className="mt-6 space-y-3">
+          <Notice tone="primary">{t("pieceUnkept", { list: unkept.join(", ") })}</Notice>
+          <Button size="sm" tip={t("tipPieceChecked")} disabled={busy} onClick={() => void checked()}>
+            {t("pieceChecked")}
+          </Button>
+          {shapeAgain}
+        </section>
+      )}
+
+      {shaped && piece.status === "failed" && shapeAgain}
+
       {piece.stage === "piece" && piece.status === "done" && piece.piece && (
         <>
-          {written?.({ title: piece.title || piece.brief, text: piece.piece })}
+          {unkept.length === 0 && written?.({ title: piece.title || piece.brief, text: piece.piece })}
           <section className="mb-6 mt-4">
             <ReadingProse text={piece.piece} />
           </section>
@@ -528,7 +610,7 @@ export function PieceView({ id, big = false, written }: { id: string; big?: bool
         </section>
       )}
 
-      {!outline && piece.status === "failed" && (
+      {!outline && !shaped && piece.status === "failed" && (
         <div className="mt-4 space-y-3">
           <ModelPicker step="outline" value={models.outline} onChange={pick("outline")} />
           <PressButton label={t("pieceOutlineAgain")} tip={t("tipPieceOutlineAgain")} primary disabled={busy} quote={againQuote.data} why={priceWhy(againQuote.data, "pieceCostOutline")} onPress={() => void press("outline")} />
