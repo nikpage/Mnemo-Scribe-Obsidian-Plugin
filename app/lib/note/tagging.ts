@@ -6,6 +6,7 @@ import type { CostContext } from "@/lib/ai/cost";
 import { type Lang, LANGUAGE_NAMES } from "@/lib/i18n";
 import { isMnemo, normalizeSegment, singular } from "@/lib/note/filing";
 import { canParent, parentsOf } from "@/lib/note/tag-tree";
+import { theoryLines } from "@/lib/theories";
 
 /**
  * Tags the person owns. Every tag has a meaning they approved; filing puts a
@@ -145,14 +146,21 @@ If none of the tags fits, propose one new tag for what the note is mainly about;
 
 Return JSON only: {"tags":[{"tag":"…","weight":"main|part|mention","quote":"…"}],"proposed":[{"tag":"…","meaning":"…","parent":null,"quote":"…"}]}`;
 
+/** What the person's corrections have shown, as filing reads it (`lib/theories.ts`). */
+export function learnedLines(theories: string[] | undefined): string {
+  const lines = theoryLines("WHAT THIS PERSON'S OWN CORRECTIONS HAVE SHOWN ABOUT HOW THEY TAG (follow it; it never makes a tag fit a note it is not about):", theories ?? []);
+  return lines ? `\n\n${lines}` : "";
+}
+
 /**
  * Which of the person's tags fit one note, and any new tag it seems to need.
  * `asked`: tags already proposed or skipped, never proposed again.
+ * `theories`: what their corrections have shown, only usable ones.
  */
 export async function tagNote(
   note: { text: string },
   own: OwnTag[],
-  opts: { lang: Lang; subjects: string[]; asked: Set<string>; ctx: CostContext }
+  opts: { lang: Lang; subjects: string[]; asked: Set<string>; ctx: CostContext; theories?: string[] }
 ): Promise<{ tags: Earned[]; proposed: Proposal[]; asks: Earned[] }> {
   const text = note.text.slice(0, NOTE_CHARS);
   if (!text.trim()) return { tags: [], proposed: [], asks: [] };
@@ -161,7 +169,7 @@ export async function tagNote(
     operation: "tag-check",
     ctx: opts.ctx,
     // The note's own words only: its title is the app's, never a quote.
-    parts: [FILE_RULES(opts.lang), `\n\nTHE PERSON'S TAGS:\n${tagLines(own)}\n\nNOTE:\n${text}`],
+    parts: [FILE_RULES(opts.lang), `\n\nTHE PERSON'S TAGS:\n${tagLines(own)}${learnedLines(opts.theories)}\n\nNOTE:\n${text}`],
     json: true,
   });
   const read = readJson(reply, FileReply) ?? {};

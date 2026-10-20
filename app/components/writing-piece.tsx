@@ -189,7 +189,7 @@ export function PiecePage({ id }: { id: string }) {
       <Link href="/write" data-tip={t("tipPieceBack")} className="mb-4 inline-block text-sm text-primary hover:underline">
         ← {t("writeNav")}
       </Link>
-      <PieceView id={id} big written={(p) => <div className="mt-4"><SaveAsNote title={p.title} text={p.text} /></div>} />
+      <PieceView id={id} big written={(p) => <div className="mt-4"><SaveAsNote title={p.title} text={p.text} piece={id} /></div>} />
       {note && <Notice tone="error" className="mt-4">{note}</Notice>}
       {piece && piece.status !== "running" && (
         <Button variant="link" tip={t("tipPieceDelete")} onClick={() => void remove()}>

@@ -37,9 +37,10 @@ function outputFile(title: string, text: string, more: Written[], addedOn: (m: W
  * "Save as my note": a Brain output or a written piece becomes an ordinary
  * note of the person's own, through the import every file takes, at the price
  * it quotes first. From then on it is theirs: filed, tagged, editable, and
- * read by the AI like any note. The plugins draw it too.
+ * read by the AI like any note. The plugins draw it too. A written piece
+ * names itself (`piece`), so an edit to the note later teaches its voice.
  */
-export function SaveAsNote({ title, text, more = [] }: { title: string; text: string; more?: Written[] }) {
+export function SaveAsNote({ title, text, more = [], piece }: { title: string; text: string; more?: Written[]; piece?: string }) {
   const { lang, t } = useLang();
   const confirm = useConfirm();
   const router = useRouter();
@@ -58,6 +59,7 @@ export function SaveAsNote({ title, text, more = [] }: { title: string; text: st
       const body = new FormData();
       body.append("files", file);
       body.append("credits", String(quoted.credits));
+      if (piece) body.append("piece", piece);
       const done = await api<{ imported?: { id: string }[] }>("/api/notes/import", { method: "POST", body });
       const id = done.imported?.[0]?.id;
       if (!id) throw new Error("not imported");

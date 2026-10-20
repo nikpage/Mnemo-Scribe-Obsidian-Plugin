@@ -11,6 +11,7 @@ import { loadSubjects } from "@/lib/note/subjects";
 import { canParent, parentsOf } from "@/lib/note/tag-tree";
 import { type Earned, type OwnTag, type Proposal, type TagSummary, barred, checkNotes, planTags, quoted, tagNote } from "@/lib/note/tagging";
 import { addParents, applyVocabulary, withParents, joinKnown, loadTagRows, loadVocabulary, rememberTags } from "@/lib/note/vocabulary";
+import { recordEvidence } from "@/lib/theories";
 
 /**
  * Everything the app asks before it changes a tag, and what happens when the
@@ -385,7 +386,22 @@ export async function decide(admin: Admin, userId: string, id: string, keep: boo
     .update({ state: keep ? "kept" : "skipped", decided_at: new Date().toISOString(), ...(keep ? { meaning, target } : {}) })
     .eq("user_id", userId)
     .eq("id", id);
+  if (!keep && was === "open") await skipLearned(admin, userId, s);
   return true;
+}
+
+/**
+ * A tag filing put to the person on a note and they said no to: a
+ * correction the app learns from (`lib/theories.ts`). Only filing's own
+ * guesses, never a word they spoke or a folder they used, never a `mnemo-` tag.
+ */
+async function skipLearned(admin: Admin, userId: string, s: Suggestion): Promise<void> {
+  if ((s.kind !== "add" && s.kind !== "new") || (s.source !== "model" && s.source !== "tidy") || isMnemo(s.tag)) return;
+  const noteId = s.recording_id || s.notes[0]?.id;
+  if (!noteId) return;
+  const { data: note } = await admin.from("recordings").select("tags").eq("user_id", userId).eq("id", noteId).maybeSingle();
+  const tags = normalizeTags(((note?.tags as string[] | null) || []).filter((t) => !isMnemo(t)));
+  await recordEvidence(admin, userId, null, [{ kind: "tag-skipped", note_id: noteId, before: tags.join(", "), after: s.tag }]);
 }
 
 /** The notes the tag work reads: finished, on the shelves the AI may read. */

@@ -75,7 +75,8 @@ export type Operation =
   | "insights"
   | "themes"
   | "what-next"
-  | "writing";
+  | "writing"
+  | "theories";
 
 /** The user a call is billed to, and the note it belongs to when there is one. */
 export interface CostContext {
