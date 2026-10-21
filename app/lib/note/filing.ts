@@ -77,6 +77,17 @@ export function normalizeTags(tags: string[]): string[] {
 }
 
 /**
+ * The tags offered while one is typed: matched anywhere in the word ("dou"
+ * finds "sourdough") once three letters are in, a typed "#" ignored, so a tag
+ * is reused rather than respelt.
+ */
+export function tagMatches(tags: string[], draft: string, exclude: string[]): string[] {
+  const q = draft.trim().toLowerCase().replace(/^#+/, "");
+  if (q.length < 3) return [];
+  return tags.filter((tag) => tag.includes(q) && tag !== q && !exclude.includes(tag)).slice(0, 6);
+}
+
+/**
  * Tags the system reads as rules, not topics: a story the person lived, a
  * quote, anything they define. Filing never adds, merges, retires or
  * re-checks one; only the person puts one on a note or takes it off.

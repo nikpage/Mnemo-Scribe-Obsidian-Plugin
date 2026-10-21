@@ -107,12 +107,13 @@ export interface TagNode {
 /**
  * The tree the sidebar draws: every tag a note carries, and every tag above
  * one, by name at each level; a tag under two tags shows under each. A tag no
- * note carries, at any depth, is left out. `n`: how many notes carry exactly
+ * note carries, at any depth, is left out, unless in `always` (the Tags
+ * screen lists every tag the person has). `n`: how many notes carry exactly
  * those tags (`noteCounts()`), one when absent.
  */
-export function tagTree(rows: TagRow[], notes: { tags: string[] | null; n?: number }[]): TagNode[] {
+export function tagTree(rows: TagRow[], notes: { tags: string[] | null; n?: number }[], always: string[] = []): TagNode[] {
   const parents = parentsOf(rows);
-  const used = new Set(notes.flatMap((note) => note.tags || []));
+  const used = new Set([...notes.flatMap((note) => note.tags || []), ...always]);
   const shown = new Set<string>();
   for (const tag of used) for (const line of ancestries(tag, parents)) for (const at of line) shown.add(at);
 
