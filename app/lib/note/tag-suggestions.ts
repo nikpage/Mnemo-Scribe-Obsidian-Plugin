@@ -692,6 +692,24 @@ export async function recheckDue(admin: Admin, userId: string): Promise<boolean>
   return (tags || []).some((t: { meaning: string; checked_meaning: string | null }) => t.meaning !== t.checked_meaning);
 }
 
+/** Held a day from each re-check started on leaving the tags screen. */
+export const RECHECK_DAY_CLAIM = "tags:recheck-day";
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * The person has left the tags screen. An answer there starts nothing: each
+ * one started a re-check of every note, whose questions arrived while the
+ * person was still answering. Now what they decided is read against every
+ * note once they are done, when it is due, at most once a day.
+ */
+export async function recheckOnLeave(admin: Admin, userId: string, base: string): Promise<string | null> {
+  if (!(await recheckDue(admin, userId))) return null;
+  if (!(await claim(admin, userId, RECHECK_DAY_CLAIM, DAY_MS))) return null;
+  const runId = await startRun(admin, userId, "recheck", base);
+  if (!runId) await release(admin, userId, RECHECK_DAY_CLAIM);
+  return runId;
+}
+
 /** Every tag on the person's notes. */
 export async function tagsInUse(admin: Admin, userId: string): Promise<string[]> {
   const { data } = await admin.from("recordings").select("tags").eq("user_id", userId);

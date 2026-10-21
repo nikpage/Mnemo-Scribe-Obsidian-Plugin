@@ -5,7 +5,7 @@ import { useState } from "react";
 import { useApi } from "@/lib/api";
 import { useLang } from "@/hooks/use-lang";
 import { NoteSection } from "@/components/note-section";
-import { Chip } from "@/components/ui";
+import { Chip, Reveal } from "@/components/ui";
 import { tipOf } from "@/lib/tooltip";
 import { factMeta } from "@/lib/note/fact-line";
 import { formatDate, formatFactDate } from "@/lib/format";
@@ -36,6 +36,9 @@ export function NoteFacts({ recordingId }: { recordingId: string }) {
   const { t, lang } = useLang();
   const facts = useApi<{ facts: Fact[] }>(`/api/notes/facts?id=${recordingId}`).data?.facts ?? [];
   const [open, setOpen] = useState<string | null>(null);
+  // The fact last opened, still shown while its quote folds away.
+  const [quoted, setQuoted] = useState<string | null>(null);
+  if (open && open !== quoted) setQuoted(open);
 
   if (facts.length === 0) return null;
 
@@ -63,23 +66,23 @@ export function NoteFacts({ recordingId }: { recordingId: string }) {
         ))}
       </div>
 
-      {open && (
-        <div className="mt-2 border-l-2 border-border pl-3 text-xs text-muted-foreground">
-          <p className="italic">“{facts.find((f) => f.id === open)?.quote}”</p>
-          {(() => {
-            const fact = facts.find((f) => f.id === open);
-            if (!fact?.happenedOn || fact.happenedOn === fact.saidOn) return null;
-            // Both dates, plainly, so a wrong resolution is visible rather
-            // than silently reordering a series.
-            return (
-              <p className="mt-1">
-                {t("factAbout")} {formatFactDate(fact.happenedOn, lang)} · {t("factSaid")}{" "}
-                {fact.saidOn && formatDate(fact.saidOn, lang)}
-              </p>
-            );
-          })()}
-        </div>
-      )}
+      <Reveal open={open !== null}>
+          <div className="mt-2 border-l-2 border-border pl-3 text-xs text-muted-foreground">
+            <p className="italic">“{facts.find((f) => f.id === quoted)?.quote}”</p>
+            {(() => {
+              const fact = facts.find((f) => f.id === quoted);
+              if (!fact?.happenedOn || fact.happenedOn === fact.saidOn) return null;
+              // Both dates, plainly, so a wrong resolution is visible rather
+              // than silently reordering a series.
+              return (
+                <p className="mt-1">
+                  {t("factAbout")} {formatFactDate(fact.happenedOn, lang)} · {t("factSaid")}{" "}
+                  {fact.saidOn && formatDate(fact.saidOn, lang)}
+                </p>
+              );
+            })()}
+          </div>
+      </Reveal>
     </NoteSection>
   );
 }

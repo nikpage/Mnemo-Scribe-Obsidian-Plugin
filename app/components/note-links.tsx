@@ -7,7 +7,7 @@ import { answered, send, useApi, useOptimistic } from "@/lib/api";
 import { busyUntilDone } from "@/lib/busy";
 import { formatDate } from "@/lib/format";
 import { useLang } from "@/hooks/use-lang";
-import { Button, List } from "@/components/ui";
+import { Button, List, Reveal } from "@/components/ui";
 import type { TranslationKey } from "@/lib/i18n";
 import { NoteSection } from "@/components/note-section";
 
@@ -118,22 +118,22 @@ export function NoteLinks({ recordingId }: { recordingId: string }) {
           <Button variant="link" className="text-xs" tip={t("tipTurnedDown")} onClick={() => setShowDown((open) => !open)}>
             {t("turnedDown", { n: down.length })}
           </Button>
-          {showDown && (
-            <List className="mt-2">
-              {down.map((link) => (
-                <li key={link.id} className="flex flex-wrap items-start gap-2 px-4 py-3 text-sm">
-                  <span className="min-w-0 flex-1">
-                    <span className="text-muted-foreground">{t(PHRASE[link.type][link.direction])} </span>
-                    {link.note.title}
-                    {link.reason && <span className="block text-xs text-muted-foreground">{link.reason}</span>}
-                  </span>
-                  <Button size="sm" tip={t("tipRestoreLink")} onClick={() => void restore(link.id)}>
-                    {t("restore")}
-                  </Button>
-                </li>
-              ))}
-            </List>
-          )}
+          <Reveal open={showDown}>
+              <List className="mt-2">
+                {down.map((link) => (
+                  <li key={link.id} className="flex flex-wrap items-start gap-2 px-4 py-3 text-sm">
+                    <span className="min-w-0 flex-1">
+                      <span className="text-muted-foreground">{t(PHRASE[link.type][link.direction])} </span>
+                      {link.note.title}
+                      {link.reason && <span className="block text-xs text-muted-foreground">{link.reason}</span>}
+                    </span>
+                    <Button size="sm" tip={t("tipRestoreLink")} onClick={() => void restore(link.id)}>
+                      {t("restore")}
+                    </Button>
+                  </li>
+                ))}
+              </List>
+          </Reveal>
         </div>
       )}
     </NoteSection>

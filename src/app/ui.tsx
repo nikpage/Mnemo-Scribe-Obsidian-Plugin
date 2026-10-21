@@ -131,6 +131,42 @@ export function List({ children, className = "" }: { children: React.ReactNode; 
   return <ul className={`scribe-list ${className}`}>{children}</ul>;
 }
 
+type Presence = "opening" | "open" | "closing" | null;
+
+/** The app's `usePresence()`: "opening" and "closing" while a part moves, null once gone. */
+function usePresence(open: boolean): { state: Presence; settle: (event: React.AnimationEvent) => void } {
+  const [state, setState] = useState<Presence>(open ? "open" : null);
+  const [was, setWas] = useState(open);
+  if (open !== was) {
+    setWas(open);
+    setState(open ? "opening" : state === null ? null : "closing");
+  }
+  const settle = (event: React.AnimationEvent) => {
+    if (event.target !== event.currentTarget) return;
+    setState((now) => (now === "opening" ? "open" : now === "closing" ? null : now));
+  };
+  return { state, settle };
+}
+
+/** A part of a screen that unfolds in place and folds away before it goes. */
+export function Reveal({ open, children, onClosed }: { open: boolean; children: React.ReactNode; onClosed?: () => void }) {
+  const { state, settle } = usePresence(open);
+  const done = (event: React.AnimationEvent) => {
+    settle(event);
+    if (state === "closing" && event.target === event.currentTarget) onClosed?.();
+  };
+  if (state === null) return null;
+  return (
+    <div
+      className="scribe-reveal"
+      data-state={state}
+      onAnimationEnd={done}
+    >
+      <div>{children}</div>
+    </div>
+  );
+}
+
 type ConfirmOptions = { action: string; cancel: string; danger?: boolean };
 type Ask = (message: string, options: ConfirmOptions) => Promise<boolean>;
 
@@ -145,26 +181,31 @@ export function useConfirm(): Ask {
 
 export function ConfirmProvider({ children }: { children: React.ReactNode }) {
   const { t } = useLang();
+  // The question stays on the box while it fades away.
   const [pending, setPending] = useState<{ message: string; options: ConfirmOptions } | null>(null);
+  const [open, setOpen] = useState(false);
+  const { state, settle } = usePresence(open);
   const answer = useRef<(yes: boolean) => void>(() => {});
   const ask = useCallback<Ask>(
     (message, options) =>
       new Promise((resolve) => {
         answer.current = resolve;
         setPending({ message, options });
+        setOpen(true);
       }),
     []
   );
   function close(yes: boolean) {
     answer.current(yes);
-    setPending(null);
+    answer.current = () => {};
+    setOpen(false);
   }
   return (
     <ConfirmContext.Provider value={ask}>
       {children}
-      {pending && (
-        <div className="scribe-confirm" role="alertdialog" aria-label={pending.message}>
-          <div>
+      {pending && state && (
+        <div className="scribe-confirm" role="alertdialog" aria-label={pending.message} data-state={state === "closing" ? "closed" : "open"}>
+          <div onAnimationEnd={settle}>
             <p>{pending.message}</p>
             <div className="scribe-row">
               <Button tip={t("tipConfirmCancel")} onClick={() => close(false)}>

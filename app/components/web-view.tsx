@@ -15,7 +15,7 @@ import { LEVEL_WIDTH, type Row, connectionsOf, drawOrder, isStruck, levelColour,
 import { ShareGlyph, ShareMark, WalkList } from "@/components/walk-list";
 import { NoteLink } from "@/components/note-link";
 import { PHRASE } from "@/components/note-links";
-import { Button, Cost, Notice, Pill } from "@/components/ui";
+import { Button, Cost, Notice, Pill, Reveal } from "@/components/ui";
 import { showPicture } from "@/lib/note/web-picture";
 import type { WebSet } from "@/lib/note/web-set";
 import { BRAIN_VIEWS, type BrainView, brainOnly, withBrain } from "@/lib/note/walk-brain";
@@ -203,6 +203,9 @@ function WalkPanel({ anchorKey, struck: struckTags, links }: { anchorKey: string
   const [view, setView] = useState<BrainView>("off");
   const [job, setJob] = useState<Kind | null>(null);
   const [opened, setOpened] = useState<string | null>(null);
+  // The reading last opened, still shown while it folds away.
+  const [reading, setReading] = useState<string | null>(null);
+  if (opened && opened !== reading) setReading(opened);
   // A new set starts from itself: a walk taken from the old one is let go.
   if (seen !== anchorKey) {
     setSeen(anchorKey);
@@ -710,16 +713,18 @@ function WalkPanel({ anchorKey, struck: struckTags, links }: { anchorKey: string
           ))}
       </div>
 
-      {opened && (
-        <section className="mt-4 rounded-2xl border border-border bg-card p-3">
-          <div className="mb-2 flex flex-wrap items-center gap-2">
-            <Button size="sm" variant="secondary" tip={t("tipWalkBrainClose")} onClick={() => setOpened(null)}>
-              {t("walkBrainClose")}
-            </Button>
-          </div>
-          <ReadingById key={opened} id={opened} />
-        </section>
-      )}
+      <Reveal open={opened !== null}>
+        {reading && (
+          <section className="mt-4 rounded-2xl border border-border bg-card p-3">
+            <div className="mb-2 flex flex-wrap items-center gap-2">
+              <Button size="sm" variant="secondary" tip={t("tipWalkBrainClose")} onClick={() => setOpened(null)}>
+                {t("walkBrainClose")}
+              </Button>
+            </div>
+            <ReadingById key={reading} id={reading} />
+          </section>
+        )}
+      </Reveal>
     </>
   );
 

@@ -34,6 +34,10 @@ const CSS = `
   color: var(--s-text); font-size: 13px; line-height: 1.45; padding: 10px 12px 24px;
   font-family: var(--joplin-font-family, var(--font-interface, system-ui, sans-serif));
   container-type: inline-size; overflow-wrap: anywhere;
+  --motion: 200ms; --motion-ease: cubic-bezier(0.2, 0, 0, 1); interpolate-size: allow-keywords;
+}
+@media (prefers-reduced-motion: reduce) {
+  .scribe-panel { --motion: 1ms; }
 }
 ${R} * { box-sizing: border-box; }
 ${R} button { display: inline; justify-content: normal; align-items: normal; user-select: auto; font: inherit; color: inherit; text-align: inherit; white-space: normal; cursor: pointer; background: none; border: 0; border-radius: 0; padding: 0; margin: 0; box-shadow: none; height: auto; min-height: 0; }
@@ -63,6 +67,13 @@ ${R} .scribe-section > h3, ${R} .scribe-heading { font-size: 13px; font-weight: 
 ${R} .scribe-fold { margin: 14px 0 0; border-top: 1px solid var(--s-line); padding-top: 10px; }
 ${R} .scribe-fold > summary { cursor: pointer; font-size: 13px; font-weight: 600; }
 ${R} .scribe-fold[open] > summary { margin-bottom: 6px; }
+${R} details::details-content { block-size: 0; overflow: clip; overflow-clip-margin: 4px; transition: block-size var(--motion) var(--motion-ease), content-visibility var(--motion) allow-discrete; }
+${R} details[open]::details-content { block-size: auto; }
+${R} .scribe-reveal { display: grid; }
+${R} .scribe-reveal > * { min-height: 0; }
+${R} .scribe-reveal[data-state="opening"] { animation: scribe-open var(--motion) var(--motion-ease); }
+${R} .scribe-reveal[data-state="closing"] { animation: scribe-close var(--motion) var(--motion-ease) forwards; pointer-events: none; }
+${R} .scribe-reveal[data-state="opening"] > *, ${R} .scribe-reveal[data-state="closing"] > * { overflow: hidden; }
 ${R} .scribe-option small, ${R} .scribe-muted { display: block; color: var(--s-muted); font-size: 12px; }
 ${R} .scribe-fold > .scribe-muted { margin-bottom: 8px; }
 
@@ -112,6 +123,8 @@ ${R} .scribe-notice.is-error { border-color: var(--s-danger); color: var(--s-dan
 ${R} .scribe-list { border-top: 1px solid var(--s-line); }
 ${R} .scribe-list > li { border-bottom: 1px solid var(--s-line); }
 ${R} .scribe-confirm { position: sticky; bottom: 0; z-index: 5; padding-top: 12px; }
+${R} .scribe-confirm[data-state="open"] > div { animation: scribe-pop-in var(--motion) var(--motion-ease); }
+${R} .scribe-confirm[data-state="closed"] > div { animation: scribe-pop-out var(--motion) var(--motion-ease) forwards; }
 ${R} .scribe-confirm > div { background: var(--s-bg); border: 1px solid var(--s-line); border-radius: var(--s-card); padding: 14px; box-shadow: 0 4px 16px rgba(0, 0, 0, .18); }
 ${R} .scribe-confirm .scribe-row { justify-content: flex-end; margin-top: 16px; }
 `;
@@ -250,6 +263,18 @@ ${R} .stroke-border { stroke: var(--s-line); }
 ${R} .stroke-card { stroke: var(--s-bg); }
 `;
 
+/**
+ * How the panel's parts open and close, the app's way (`globals.css`): the
+ * steps of each movement, named once for the page. Not rules on the panel's
+ * parts, so nothing here has a host rule to outrank.
+ */
+const MOTION = `
+@keyframes scribe-open { from { grid-template-rows: 0fr; opacity: 0; } to { grid-template-rows: 1fr; opacity: 1; } }
+@keyframes scribe-close { from { grid-template-rows: 1fr; opacity: 1; } to { grid-template-rows: 0fr; opacity: 0; } }
+@keyframes scribe-pop-in { from { opacity: 0; transform: translateY(4px) scale(0.98); } }
+@keyframes scribe-pop-out { to { opacity: 0; transform: translateY(4px) scale(0.98); } }
+`;
+
 /** Left undrawn on purpose: the app's wide-screen rules and page margins, which a side panel has no room for. */
 export const UNDRAWN = ["md:hidden", "md:p-6", "md:h-[70vh]", "p-4", "max-w-2xl", "max-w-3xl", "sm:grid-cols-2"];
 
@@ -257,6 +282,6 @@ export function addStyle(doc: Document = document) {
   if (doc.getElementById("scribe-panel-style")) return;
   const style = doc.createElement("style");
   style.id = "scribe-panel-style";
-  style.textContent = CSS + LAYOUT;
+  style.textContent = CSS + LAYOUT + MOTION;
   doc.head.appendChild(style);
 }

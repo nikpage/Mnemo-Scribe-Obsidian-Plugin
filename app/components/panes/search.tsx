@@ -17,7 +17,7 @@ import { NoteRow } from "@/components/note-row";
 import { BrainHits } from "@/components/what-next";
 import { type BrainStart, OPEN_BRAIN } from "@/components/home-dashboard";
 import { NoteShortcuts } from "@/components/note-shortcuts";
-import { Button, Chip, Heading, Input, List, Notice, selectClass } from "@/components/ui";
+import { Button, Chip, Heading, Input, List, Notice, Reveal, selectClass } from "@/components/ui";
 
 /** How far back a search looks. Days, or everything. */
 const RANGES = { any: 0, week: 7, month: 30, year: 365 } as const;
@@ -105,47 +105,46 @@ export function SearchPane() {
         <Chip on={showFilters} aria-expanded={showFilters} tip={t("tipSearchFilter")} onClick={() => setShowFilters(!showFilters)}>
           {t("filter")}
         </Chip>
-        {showFilters && (
-          <>
-            <select data-tip={t("tipSearchRange")} value={range} onChange={(e) => setRange(e.target.value as Range)} className={selectClass}>
-              <option value="any">{t("filterAnyTime")}</option>
-              <option value="week">{t("filterWeek")}</option>
-              <option value="month">{t("filterMonth")}</option>
-              <option value="year">{t("filterYear")}</option>
-            </select>
-            <select data-tip={t("tipSearchLanguage")} value={language} onChange={(e) => setLanguage(e.target.value)} className={selectClass}>
-              <option value="">{t("filterAnyLang")}</option>
-              <option value="en">{t("filterEnglish")}</option>
-              <option value="cs">{t("filterCzech")}</option>
-            </select>
-            <Chip on={actionsOnly} tip={t("tipSearchActions")} onClick={() => setActionsOnly(!actionsOnly)}>
-              {t("filterActions")}
-            </Chip>
-            <select data-tip={t("tipSearchShelf")} value={where} onChange={(e) => setWhere(e.target.value as typeof where)} className={selectClass}>
-              <option value="">{t("shelfNormal")}</option>
-              <option value="cold">{t("shelfCold")}</option>
-              <option value="trash">{t("shelfTrash")}</option>
-            </select>
-          </>
-        )}
       </div>
-
-      {showFilters && tags.length > 0 && (
-        <div className="mb-4 flex flex-wrap gap-1">
-          {tags.map((tag) => (
-            <Chip
-              key={tag}
-              on={tagFilters.includes(tag)}
-              tip={t("tipSearchTag")}
-              onClick={() =>
-                setTagFilters((prev) => (prev.includes(tag) ? prev.filter((x) => x !== tag) : [...prev, tag]))
-              }
-            >
-              #{tag}
-            </Chip>
-          ))}
+      <Reveal open={showFilters}>
+        <div className="mb-4 flex flex-wrap items-center gap-2 text-sm">
+          <select data-tip={t("tipSearchRange")} value={range} onChange={(e) => setRange(e.target.value as Range)} className={selectClass}>
+            <option value="any">{t("filterAnyTime")}</option>
+            <option value="week">{t("filterWeek")}</option>
+            <option value="month">{t("filterMonth")}</option>
+            <option value="year">{t("filterYear")}</option>
+          </select>
+          <select data-tip={t("tipSearchLanguage")} value={language} onChange={(e) => setLanguage(e.target.value)} className={selectClass}>
+            <option value="">{t("filterAnyLang")}</option>
+            <option value="en">{t("filterEnglish")}</option>
+            <option value="cs">{t("filterCzech")}</option>
+          </select>
+          <Chip on={actionsOnly} tip={t("tipSearchActions")} onClick={() => setActionsOnly(!actionsOnly)}>
+            {t("filterActions")}
+          </Chip>
+          <select data-tip={t("tipSearchShelf")} value={where} onChange={(e) => setWhere(e.target.value as typeof where)} className={selectClass}>
+            <option value="">{t("shelfNormal")}</option>
+            <option value="cold">{t("shelfCold")}</option>
+            <option value="trash">{t("shelfTrash")}</option>
+          </select>
         </div>
-      )}
+        {tags.length > 0 && (
+          <div className="mb-4 flex flex-wrap gap-1">
+            {tags.map((tag) => (
+              <Chip
+                key={tag}
+                on={tagFilters.includes(tag)}
+                tip={t("tipSearchTag")}
+                onClick={() =>
+                  setTagFilters((prev) => (prev.includes(tag) ? prev.filter((x) => x !== tag) : [...prev, tag]))
+                }
+              >
+                #{tag}
+              </Chip>
+            ))}
+          </div>
+        )}
+      </Reveal>
 
       {shownFacts.length > 0 && (
         <Notice className="mb-4">
