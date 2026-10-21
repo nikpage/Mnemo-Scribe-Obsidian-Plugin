@@ -3,7 +3,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { noteName } from "@/lib/note/filing";
 import type { LinkType } from "@/lib/note/links";
-import { type Parents, type TagRow, parentsOf, under } from "@/lib/note/tag-tree";
+import type { TagRow } from "@/lib/note/tag-tree";
 import { SUBJECT_MAX_NOTES, isSelfSubject, type NoteRef, type WebInput, type WebLink, type WebNote } from "@/lib/note/web";
 import type { BrainRef } from "@/lib/note/walk-brain";
 import type { Kind } from "@/lib/note/what-next-target";
@@ -11,8 +11,8 @@ import type { Kind } from "@/lib/note/what-next-target";
 /**
  * The walk: a few steps out from one tag or note, never the whole store.
  *
- * From the centre it reaches outward ring by ring — a tag to the tags above
- * and below it and the notes carrying it; a note to its tags and to the notes
+ * From the centre it reaches outward ring by ring — a tag to the notes
+ * carrying it; a note to its tags and to the notes
  * it is joined to by a note link (kept or not yet asked, never turned down), a
  * fact subject or a theme. Each ring has a ceiling so the picture stays
  * readable; within it the strongest route comes first, then the newest note.
@@ -37,11 +37,11 @@ export type WalkNode =
   /** A Brain output drawn in the walk (`walk-brain.ts`), dated when it was written; `read` = how many of the walk's notes it read. */
   | { id: string; kind: "brain"; ring: number; from: string | null; brain: { id: string; title: string; job: Kind; quoted: string[] }; at: string; read: number };
 
-/** `under`: tag a sits under tag b. `carries`: note a carries tag b. `link`: note a (later) to note b. `read`: Brain output a read note b (or a note under tag b). */
+/** `under`: tag a hangs from the whole store's centre (`ALL_TAG`). `carries`: note a carries tag b. `link`: note a (later) to note b. `read`: Brain output a read note b (or a note under tag b). */
 export type WalkEdge = { id: string; a: string; b: string; kind: "under" | "carries" | "link" | "subject" | "theme" | "read"; type?: LinkType; why: string | null; name?: string };
 export type Walk = { centre: string; nodes: WalkNode[]; edges: WalkEdge[] };
 export type Centre = { tag: string } | { note: string };
-/** The centre of the whole store: a tag name no one can type (tags are normalised), joined above every top-level tag. */
+/** The centre of the whole store: a tag name no one can type (tags are normalised), joined to every tag in use. */
 export const ALL_TAG = "∗ all notes";
 
 const tagId = (name: string) => `t:${name}`;
@@ -56,25 +56,17 @@ const median = (dates: string[]): string => [...dates].sort()[Math.floor(dates.l
 
 /** The walk from a centre; null when the centre has no note in use. */
 export function buildWalk(input: WebInput, centre: Centre): Walk | null {
-  const parents: Parents = parentsOf(input.rows);
-  // The whole store: every top-level tag in use sits under one centre, and notes with no tag hang from it.
+  // The whole store: every tag in use hangs from one centre, and so do notes with no tag.
   const all = "tag" in centre && centre.tag === ALL_TAG;
-  if (all) {
-    const used = new Set(input.notes.flatMap((note) => note.tags || []));
-    for (const tag of used) if (!parents.get(tag)?.size) parents.set(tag, new Set([ALL_TAG]));
-  }
+  const everyTag = all ? [...new Set(input.notes.flatMap((note) => note.tags || []))] : [];
   const byId = new Map(input.notes.map((note) => [note.id, note]));
 
-  const children = new Map<string, string[]>();
-  for (const [tag, ps] of parents) for (const p of ps) children.set(p, [...(children.get(p) ?? []), tag]);
-
-  // How many notes each tag has by every route, and the date in the middle of them.
+  // How many notes carry each tag, and the date in the middle of them.
   const stat = new Map<string, { count: number; at: string }>();
   const statOf = (tag: string) => {
     let s = stat.get(tag);
     if (!s) {
-      const branch = under(tag, parents);
-      const inside = tag === ALL_TAG ? input.notes : input.notes.filter((note) => (note.tags || []).some((t) => branch.has(t)));
+      const inside = tag === ALL_TAG ? input.notes : input.notes.filter((note) => (note.tags || []).includes(tag));
       s = { count: inside.length, at: inside.length ? median(inside.map((n) => n.recorded_at)) : "" };
       stat.set(tag, s);
     }
@@ -133,7 +125,7 @@ export function buildWalk(input: WebInput, centre: Centre): Walk | null {
   const onward = (id: string): string[] => {
     if (id.startsWith("t:")) {
       const tag = id.slice(2);
-      const tags = [...(parents.get(tag) ?? []), ...(children.get(tag) ?? [])].filter(inUse).sort((a, b) => statOf(b).count - statOf(a).count || a.localeCompare(b));
+      const tags = (tag === ALL_TAG ? everyTag : []).filter(inUse).sort((a, b) => statOf(b).count - statOf(a).count || a.localeCompare(b));
       const notes = carrying.get(tag) ?? [];
       return [...tags.map(tagId).filter(fresh).slice(0, tag === ALL_TAG ? RING_MAX[1] : TAG_OUT.tags), ...notes.map((n) => noteId(n.id)).filter(fresh).slice(0, TAG_OUT.notes)];
     }
@@ -161,10 +153,7 @@ export function buildWalk(input: WebInput, centre: Centre): Walk | null {
   // Every line between what is shown, once.
   const edges: WalkEdge[] = [];
   const shownNotes = [...nodes.values()].filter((n): n is Extract<WalkNode, { kind: "note" }> => n.kind === "note");
-  for (const node of nodes.values()) {
-    if (node.kind !== "tag") continue;
-    for (const p of [...(parents.get(node.name) ?? [])].sort()) if (nodes.has(tagId(p))) edges.push({ id: `u:${node.name}\n${p}`, a: node.id, b: tagId(p), kind: "under", why: null });
-  }
+  if (all) for (const node of nodes.values()) if (node.kind === "tag" && node.name !== ALL_TAG) edges.push({ id: `u:${node.name}\n${ALL_TAG}`, a: node.id, b: tagId(ALL_TAG), kind: "under", why: null });
   for (const note of shownNotes) for (const tag of [...new Set(note.tags.length || !all ? note.tags : [ALL_TAG])].sort()) if (nodes.has(tagId(tag))) edges.push({ id: `c:${note.note.id}\n${tag}`, a: note.id, b: tagId(tag), kind: "carries", why: null });
   const seen = new Set<string>();
   for (const note of shownNotes) {

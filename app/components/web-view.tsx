@@ -940,7 +940,6 @@ function EdgeCard({ edge, walk, t }: { edge: WalkEdge; walk: Walk; t: T }) {
   const a = node(edge.a);
   const b = node(edge.b);
   if (!a || !b) return null;
-  if (edge.kind === "under" && a.kind === "tag" && b.kind === "tag") return <p>{t("webParentKept", { tag: a.name, parent: b.name })}</p>;
   if (edge.kind === "read" && a.kind === "brain") return <p>{t(b.kind === "tag" ? "webBrainReadTag" : "webBrainReadNote", { output: nameOf(a), name: nameOf(b) })}</p>;
   if (a.kind !== "note" || b.kind !== "note") return null;
   if (edge.kind === "link") {

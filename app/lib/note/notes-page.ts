@@ -4,8 +4,6 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { LIST_COLUMNS } from "@/lib/note/list-columns";
 import { decodeSegment, normalizePath, normalizeTags, splitPath } from "@/lib/note/filing";
 import { findNotes } from "@/lib/note/find";
-import { loadTagRows } from "@/lib/note/vocabulary";
-import { parentsOf, under } from "@/lib/note/tag-tree";
 import { READ, SHELVES, type Shelf } from "@/lib/note/shelf";
 
 /**
@@ -26,7 +24,7 @@ export const NOTES_PAGE = 50;
 /** Which notes a list shows: finished ones, on one shelf (or the two search reads), narrowed by tags. */
 export type NoteView = {
   shelf: Shelf | "read";
-  /** For each, the notes carrying it or a tag under it. */
+  /** Notes carrying every one. */
   tags?: string[];
   /** Notes with no tag. */
   untagged?: boolean;
@@ -82,10 +80,7 @@ export async function notesPage<T>(admin: Db, userId: string, view: NoteView, be
   let q = admin.from("recordings").select(LIST_COLUMNS).eq("user_id", userId).eq("status", "done");
   q = view.shelf === "read" ? q.in("shelf", READ) : q.eq("shelf", view.shelf);
   if (view.untagged) q = q.eq("tags", "{}");
-  else if (view.tags?.length) {
-    const parents = parentsOf(await loadTagRows(admin, userId));
-    for (const tag of view.tags) q = q.overlaps("tags", [...under(tag, parents)]);
-  }
+  else if (view.tags?.length) q = q.contains("tags", view.tags);
   const from = before ? readCursor(before) : null;
   if (from) q = q.or(`recorded_at.lt."${from.at}",and(recorded_at.eq."${from.at}",id.lt.${from.id})`);
   // One more than a page says whether there is a next one.
@@ -145,7 +140,7 @@ async function everyNote<T>(admin: Db, userId: string, columns: string, shelves:
   }
 }
 
-/** Notes that carry exactly these tags, and how many: the tag tree's numbers without the notes. */
+/** Notes that carry exactly these tags, and how many: the sidebar's numbers without the notes. */
 export type TagSet = { tags: string[]; n: number };
 
 /** A pinned note, as Search's shortcuts name it. */

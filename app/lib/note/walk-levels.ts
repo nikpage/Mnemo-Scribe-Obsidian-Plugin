@@ -29,7 +29,7 @@ const REASON_ORDER: Record<WalkEdge["kind"], number> = { link: 0, subject: 1, th
 
 /** Every line of the picture that touches one node and has a reason to read, the strongest first; a note carrying a tag is the tag chips already shown. */
 export function connectionsOf(walk: Walk, id: string): WalkEdge[] {
-  return walk.edges.filter((x) => x.kind !== "carries" && (x.a === id || x.b === id)).sort((x, y) => REASON_ORDER[x.kind] - REASON_ORDER[y.kind] || x.id.localeCompare(y.id));
+  return walk.edges.filter((x) => x.kind !== "carries" && x.kind !== "under" && (x.a === id || x.b === id)).sort((x, y) => REASON_ORDER[x.kind] - REASON_ORDER[y.kind] || x.id.localeCompare(y.id));
 }
 
 /** What the box under the picture describes: the thing pointed at if it is in this walk, else the one walked from. */

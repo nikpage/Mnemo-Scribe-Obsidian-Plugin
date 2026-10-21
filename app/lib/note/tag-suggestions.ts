@@ -8,9 +8,8 @@ import { primaryLanguage } from "@/lib/note/language";
 import { READ } from "@/lib/note/shelf";
 import { storyMeaning } from "@/lib/note/stories";
 import { loadSubjects } from "@/lib/note/subjects";
-import { canParent, parentsOf } from "@/lib/note/tag-tree";
 import { type Earned, type OwnTag, type Proposal, type TagSummary, type Verdict, alreadyAsked, barred, checkNotes, planTags, quoted, tagNote } from "@/lib/note/tagging";
-import { addParents, applyVocabulary, withParents, joinKnown, loadTagRows, loadVocabulary, rememberTags } from "@/lib/note/vocabulary";
+import { applyVocabulary, joinKnown, loadTagRows, loadVocabulary, rememberTags } from "@/lib/note/vocabulary";
 import { recordEvidence } from "@/lib/theories";
 import { startBackground } from "@/lib/background";
 
@@ -24,7 +23,7 @@ import { startBackground } from "@/lib/background";
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Admin = SupabaseClient<any, any, any>;
 
-export const KINDS = ["new", "meaning", "merge", "retire", "parent", "add", "remove"] as const;
+export const KINDS = ["new", "meaning", "merge", "retire", "add", "remove"] as const;
 export type Kind = (typeof KINDS)[number];
 export type Source = "model" | "spoken" | "folder" | "tidy";
 
@@ -54,26 +53,21 @@ export function shown(s: Pick<Suggestion, "kind" | "source" | "notes">, bare: (n
 }
 
 /** The tags the person has, with their meanings: those in use, and those given a meaning. */
-export async function ownTags(admin: Admin, userId: string, inUse: string[]): Promise<(OwnTag & { parents: string[]; checked: string | null })[]> {
-  const [{ data }, { data: links }] = await Promise.all([
-    admin.from("tag_vocabulary").select("name, meaning, checked_meaning").eq("user_id", userId),
-    admin.from("tag_parents").select("tag, parent").eq("user_id", userId),
-  ]);
+export async function ownTags(admin: Admin, userId: string, inUse: string[]): Promise<(OwnTag & { checked: string | null })[]> {
+  const { data } = await admin.from("tag_vocabulary").select("name, meaning, checked_meaning").eq("user_id", userId);
   const used = new Set(inUse);
-  return withParents((Array.isArray(data) ? data : []) as { name: string; meaning: string | null; checked_meaning: string | null }[], links)
+  return ((Array.isArray(data) ? data : []) as { name: string; meaning: string | null; checked_meaning: string | null }[])
     .filter((row) => row.meaning || used.has(row.name))
     .map((row) => ({
       name: row.name,
       meaning: row.meaning ?? null,
-      parents: row.parents,
       checked: row.checked_meaning ?? null,
     }));
 }
 
-/** New tags already asked about and skipped (or, with `any`, asked at all): never proposed again. */
-export async function skippedNames(admin: Admin, userId: string, any = false): Promise<Set<string>> {
-  const query = admin.from("tag_suggestions").select("tag").eq("user_id", userId).eq("kind", "new");
-  const { data } = await (any ? query : query.eq("state", "skipped"));
+/** New tags already asked about and skipped: never proposed again. */
+export async function skippedNames(admin: Admin, userId: string): Promise<Set<string>> {
+  const { data } = await admin.from("tag_suggestions").select("tag").eq("user_id", userId).eq("kind", "new").eq("state", "skipped");
   return new Set((data || []).map((row: { tag: string }) => row.tag));
 }
 
@@ -88,6 +82,7 @@ export async function openQuestions(admin: Admin, userId: string): Promise<(Sugg
     .select("id, kind, tag, target, recording_id, meaning, notes, why, source")
     .eq("user_id", userId)
     .eq("state", "open")
+    .in("kind", KINDS)
     .order("created_at", { ascending: true });
   const all = (data || []) as Suggestion[];
   const ids = [...new Set(all.flatMap((s) => (s.recording_id ? [s.recording_id] : s.notes.map((n) => n.id))))];
@@ -110,14 +105,14 @@ export async function openQuestions(admin: Admin, userId: string): Promise<(Sugg
     }));
 }
 
-/** New tags and parents the person turned down, newest first, each with its notes' titles: restorable. */
+/** New tags the person turned down, newest first, each with its notes' titles: restorable. */
 export async function turnedDown(admin: Admin, userId: string): Promise<(Pick<Suggestion, "id" | "kind" | "tag" | "target" | "meaning"> & { notes: string[] })[]> {
   const { data } = await admin
     .from("tag_suggestions")
     .select("id, kind, tag, target, meaning, notes")
     .eq("user_id", userId)
     .eq("state", "skipped")
-    .in("kind", ["new", "parent"])
+    .eq("kind", "new")
     .not("decided_at", "is", null)
     .order("decided_at", { ascending: false })
     .limit(100);
@@ -136,9 +131,9 @@ export async function noteQuestions(
   admin: Admin,
   userId: string,
   noteId: string
-): Promise<{ id: string; tag: string; meaning: string | null; parent: string; why: string; notes: number; story?: true }[]> {
+): Promise<{ id: string; tag: string; meaning: string | null; why: string; notes: number; story?: true }[]> {
   const [{ data }, { data: stories }, { data: note }] = await Promise.all([
-    admin.from("tag_suggestions").select("id, tag, target, meaning, notes").eq("user_id", userId).eq("state", "open").eq("kind", "new").contains("notes", [{ id: noteId }]),
+    admin.from("tag_suggestions").select("id, tag, meaning, notes").eq("user_id", userId).eq("state", "open").eq("kind", "new").contains("notes", [{ id: noteId }]),
     admin.from("tag_suggestions").select("id, tag, why").eq("user_id", userId).eq("state", "open").eq("kind", "add").eq("recording_id", noteId).like("tag", "mnemo-%"),
     admin.from("recordings").select("tags").eq("user_id", userId).eq("id", noteId).maybeSingle(),
   ]);
@@ -146,36 +141,17 @@ export async function noteQuestions(
   const meanings = new Map((await loadTagRows(admin, userId)).map((r) => [r.name, r.meaning]));
   const lang = await primaryLanguage(admin, userId);
   return [
-    ...((data || []) as Pick<Suggestion, "id" | "tag" | "target" | "meaning" | "notes">[]).map((s) => ({
+    ...((data || []) as Pick<Suggestion, "id" | "tag" | "meaning" | "notes">[]).map((s) => ({
       id: s.id,
       tag: s.tag,
       meaning: s.meaning,
-      parent: s.target,
       why: s.notes.find((n) => n.id === noteId)?.why ?? "",
       notes: s.notes.length,
     })),
     ...((stories || []) as Pick<Suggestion, "id" | "tag" | "why">[])
       .filter((s) => !has.has(s.tag))
-      .map((s) => ({ id: s.id, tag: s.tag, meaning: storyMeaning(s.tag, lang) ?? meanings.get(s.tag) ?? null, parent: "", why: s.why ?? "", notes: 1, story: true as const })),
+      .map((s) => ({ id: s.id, tag: s.tag, meaning: storyMeaning(s.tag, lang) ?? meanings.get(s.tag) ?? null, why: s.why ?? "", notes: 1, story: true as const })),
   ];
-}
-
-/**
- * The tag each thread through the store offers its notes, asked about at once
- * like a tidy-up's. A tag the person already has, skipped, or may not hold is
- * not offered; nothing goes on a note until they keep it.
- */
-export async function proposeThemeTags(admin: Admin, userId: string, themes: { evidence: string[]; tag?: { name: string; meaning: string } }[]): Promise<void> {
-  const subjects = await clientNames(admin, userId);
-  const own = new Set((await loadTagRows(admin, userId)).map((r) => r.name));
-  const skipped = await skippedNames(admin, userId);
-  for (const theme of themes) {
-    const tag = normalizeSegment(theme.tag?.name ?? "");
-    if (!tag || isMnemo(tag) || own.has(tag) || alreadyAsked(tag, skipped) || barred(tag, subjects)) continue;
-    for (const noteId of theme.evidence) {
-      await proposeTags(admin, userId, noteId, [{ tag, meaning: theme.tag!.meaning, parent: null, why: "" }], "tidy");
-    }
-  }
 }
 
 /** The names the person's clients go by: never tags. */
@@ -215,7 +191,7 @@ export async function proposeTags(admin: Admin, userId: string, noteId: string, 
           user_id: userId,
           kind: "new",
           tag: p.tag,
-          target: p.parent ?? "",
+          target: "",
           meaning: p.meaning,
           notes: [{ id: noteId, why: p.why }],
           source,
@@ -266,28 +242,20 @@ export interface Edit {
   name?: string;
   meaning?: string;
   target?: string;
-  /** Delete the tag instead of what was asked (a meaning, a merge, a parent). */
+  /** Delete the tag instead of what was asked (a meaning, a merge). */
   retire?: boolean;
   /** Notes whose only tag goes, to the tag each gets instead. */
   moves?: Record<string, string>;
 }
 
-/**
- * Takes a tag out of the vocabulary and the tree: the tags under it go under
- * `heirs` instead (what it merged into, or the tags it sat under), never
- * losing a parent they had elsewhere.
- */
-async function dropTag(admin: Admin, userId: string, tag: string, heirs: string[]): Promise<void> {
-  const children = (await loadTagRows(admin, userId)).filter((r) => r.parents.includes(tag)).map((r) => r.name);
-  await admin.from("tag_parents").delete().eq("user_id", userId).eq("tag", tag);
-  await admin.from("tag_parents").delete().eq("user_id", userId).eq("parent", tag);
-  await addParents(admin, userId, children.flatMap((child) => heirs.filter((h) => h !== child && h !== tag).map((h) => [child, h] as [string, string])));
+/** Takes a tag out of the vocabulary. */
+async function dropTag(admin: Admin, userId: string, tag: string): Promise<void> {
   await admin.from("tag_vocabulary").delete().eq("user_id", userId).eq("name", tag);
 }
 
 /**
  * Carries out or skips one suggestion. `edit` is the person's change before
- * keeping it: a reworded meaning, another parent, another tag to merge into,
+ * keeping it: a reworded meaning, another tag to merge into,
  * or the tag deleted instead, with the notes it leaves bare moved to another.
  * Returns false when the suggestion is not this person's or already answered.
  * `was: "skipped"` restores one the person turned down: kept, exactly as a
@@ -313,14 +281,12 @@ export async function decide(admin: Admin, userId: string, id: string, keep: boo
       const tag = (edit.name !== undefined && normalizeSegment(edit.name)) || s.tag;
       if (barred(tag, await clientNames(admin, userId))) return false;
       const had = (await loadTagRows(admin, userId)).find((r) => r.name === tag);
-      await rememberTags(admin, userId, target ? [tag, target] : [tag], true);
+      await rememberTags(admin, userId, [tag], true);
       await admin
         .from("tag_vocabulary")
         .update({ meaning: had?.meaning ?? meaning, updated_at: now })
         .eq("user_id", userId)
         .eq("name", tag);
-      // One more parent; one that would loop is dropped (`addParents`).
-      if (target && target !== tag) await addParents(admin, userId, [[tag, target]]);
       for (const note of s.notes) {
         await retag(admin, userId, note.id, (tags, why) => ({ tags: [...tags, tag], why: { ...why, [tag]: note.why } }));
       }
@@ -342,7 +308,7 @@ export async function decide(admin: Admin, userId: string, id: string, keep: boo
         .update({ aliases: normalizeTags([...((into?.aliases as string[]) || []), s.tag]), updated_at: now })
         .eq("user_id", userId)
         .eq("name", target);
-      await dropTag(admin, userId, s.tag, [target]);
+      await dropTag(admin, userId, s.tag);
     } else if (s.kind === "retire") {
       // A note left bare goes to the tag the person ticked, if that tag is theirs.
       const theirs = new Set(edit.moves ? (await loadTagRows(admin, userId)).map((r) => r.name) : []);
@@ -353,17 +319,7 @@ export async function decide(admin: Admin, userId: string, id: string, keep: boo
           return rest.length === 0 && to && to !== s.tag && theirs.has(to) ? { tags: [to], why: { ...why, [to]: why[to] ?? "" } } : { tags: rest, why };
         });
       }
-      await dropTag(admin, userId, s.tag, (await loadTagRows(admin, userId)).find((r) => r.name === s.tag)?.parents ?? []);
-    } else if (s.kind === "parent") {
-      if (!target || target === s.tag) return false;
-      await rememberTags(admin, userId, [s.tag, target], true);
-      const rows = await loadTagRows(admin, userId);
-      if (!canParent(s.tag, target, parentsOf(rows))) return false;
-      await addParents(admin, userId, [[s.tag, target]]);
-      // A new top-level tag comes with the meaning it was proposed with.
-      if (meaning && !rows.find((r) => r.name === target)?.meaning) {
-        await admin.from("tag_vocabulary").update({ meaning, updated_at: now }).eq("user_id", userId).eq("name", target);
-      }
+      await dropTag(admin, userId, s.tag);
     } else if (s.kind === "add") {
       await retag(admin, userId, s.recording_id, (tags, why) => ({ tags: [...tags, s.tag], why: { ...why, [s.tag]: s.why ?? "" } }));
     } else if (s.kind === "remove") {
@@ -426,8 +382,7 @@ const blank: Pick<Suggestion, "target" | "recording_id" | "meaning" | "notes" | 
 
 /**
  * A tidy-up: one look at every tag and the notes carrying it. Meanings for
- * tags without one are written in; merges, parents and new top-level tags are
- * saved as suggestions. A tag on fewer than two notes is offered for
+ * tags without one are written in; merges are saved as suggestions. A tag on fewer than two notes is offered for
  * retirement without asking a model.
  */
 export async function tidy(admin: Admin, userId: string, runId: string): Promise<void> {
@@ -444,7 +399,6 @@ export async function tidy(admin: Admin, userId: string, runId: string): Promise
   const summaries: TagSummary[] = own.map((tag) => ({
     name: tag.name,
     meaning: tag.meaning,
-    parents: tag.parents,
     notes: notes
       .filter((n) => (n.tags || []).includes(tag.name))
       .sort((a, b) => Number(ref.has(b.id)) - Number(ref.has(a.id)))
@@ -452,7 +406,7 @@ export async function tidy(admin: Admin, userId: string, runId: string): Promise
   }));
   const ctx = { userId };
   const subjects = await clientNames(admin, userId);
-  const plan = await planTags(summaries, { lang: await primaryLanguage(admin, userId), subjects, asked: await skippedNames(admin, userId, true), ctx });
+  const plan = await planTags(summaries, { lang: await primaryLanguage(admin, userId), subjects, ctx });
 
   for (const m of plan.meanings) {
     await admin.from("tag_vocabulary").update({ meaning: m.meaning, updated_at: new Date().toISOString() }).eq("user_id", userId).eq("name", m.tag).is("meaning", null);
@@ -462,8 +416,6 @@ export async function tidy(admin: Admin, userId: string, runId: string): Promise
   await ask(admin, userId, [
     ...thin.map((t) => ({ ...blank, kind: "retire" as const, tag: t.name, why: t.notes.length ? "one note" : "no notes", source: "tidy" as const })),
     ...plan.merges.map((m) => ({ ...blank, kind: "merge" as const, tag: m.tag, target: m.into, why: m.why, source: "tidy" as const })),
-    ...plan.parents.map((p) => ({ ...blank, kind: "parent" as const, tag: p.tag, target: p.parent, source: "tidy" as const })),
-    ...plan.groups.flatMap((g) => g.children.map((c) => ({ ...blank, kind: "parent" as const, tag: c, target: g.tag, meaning: g.meaning, why: g.why, source: "tidy" as const }))),
   ]);
   const byRef = new Map(plan.moves.map((m) => [m.ref, m.tag]));
   for (const tag of own) {
@@ -660,7 +612,7 @@ export async function startRun(admin: Admin, userId: string, kind: "tidy" | "rec
 }
 
 /** Structural questions still open: the tags themselves are not settled yet. */
-const SHAPING: Kind[] = ["new", "meaning", "merge", "retire", "parent"];
+const SHAPING: Kind[] = ["new", "meaning", "merge", "retire"];
 
 /**
  * Whether every note should be read again now: some tag's meaning changed
@@ -718,7 +670,7 @@ export async function givenTags(admin: Admin, userId: string, noteId: string, wo
     admin,
     userId,
     noteId,
-    clean.filter((tag) => !own.has(tag) && !skipped.has(tag)).map((tag) => ({ tag, meaning: "", parent: null, why: "" })),
+    clean.filter((tag) => !own.has(tag) && !skipped.has(tag)).map((tag) => ({ tag, meaning: "", why: "" })),
     source
   );
   return clean.filter((tag) => own.has(tag));

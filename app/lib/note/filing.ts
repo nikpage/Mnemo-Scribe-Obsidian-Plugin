@@ -187,20 +187,11 @@ export function folderTags(folder: string): string[] {
 }
 
 /**
- * Tags as a vault writes them, nested: `food/recipe` is the tag `recipe`
- * under `food`. The note carries only the last word; each slash is a parent
- * the person set, as `[child, parent]`.
+ * Tags as a vault writes them, nested: `food/recipe` is both tags, `food` and
+ * `recipe`, so a note filed under food is still found there.
  */
-export function nestedTags(raw: string[]): { tags: string[]; parents: [string, string][] } {
-  const tags: string[] = [];
-  const parents: [string, string][] = [];
-  for (const written of raw) {
-    const levels = splitPath(written);
-    if (levels.length === 0) continue;
-    tags.push(levels[levels.length - 1]);
-    for (let i = 1; i < levels.length; i++) parents.push([levels[i], levels[i - 1]]);
-  }
-  return { tags: normalizeTags(tags), parents };
+export function nestedTags(raw: string[]): string[] {
+  return normalizeTags(raw.flatMap(splitPath));
 }
 
 /** Enough to see that "recipe" and "recipes" are the same word. */

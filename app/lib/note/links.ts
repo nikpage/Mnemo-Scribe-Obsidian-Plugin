@@ -7,6 +7,8 @@ import { z } from "zod";
 import { type CostContext } from "@/lib/ai/cost";
 import { nearestByVector } from "@/lib/note/neighbours";
 import { spokenDate } from "@/lib/note/facts";
+import { noteText } from "@/lib/note/build";
+import { inFiction, loadFiction } from "@/lib/note/fiction";
 import { READ } from "@/lib/note/shelf";
 
 const MODEL = "gemini-3.1-flash-lite";
@@ -153,6 +155,8 @@ interface Sketch {
   recordedOn: string;
   summary: string;
   facts: string[];
+  /** Some of it is fiction (`fiction.ts`): said beside its name, and on each fact said in the story. */
+  fiction: boolean;
 }
 
 async function sketch(
@@ -165,7 +169,7 @@ async function sketch(
 
   const { data: notes } = await admin
     .from("recordings")
-    .select("id, label, tags, recorded_at, analysis")
+    .select("id, label, tags, recorded_at, analysis, body_md, transcript")
     .eq("user_id", userId)
     .eq("status", "done")
     // Every candidate passes here: none from Cold storage or Trash.
@@ -174,17 +178,19 @@ async function sketch(
 
   const { data: facts } = await admin
     .from("note_facts")
-    .select("recording_id, subject, variable, value_text, happened_on, happened_precision")
+    .select("recording_id, subject, variable, value_text, happened_on, happened_precision, quote")
     .eq("user_id", userId)
     .in("recording_id", ids)
     .gte("confidence", 0.5)
     .limit(400);
 
+  const texts = new Map((notes || []).map((n) => [n.id as string, noteText(n)]));
+  const fiction = await loadFiction(admin, userId, (notes || []).map((n) => ({ id: n.id, title: n.label || "", text: texts.get(n.id) || "" })));
   const byNote = new Map<string, string[]>();
   for (const f of facts || []) {
     const line = `${f.subject} ${f.variable}: ${f.value_text}${
       f.happened_on ? ` (${spokenDate(f.happened_on, f.happened_precision)})` : ""
-    }`;
+    }${inFiction(texts.get(f.recording_id) || "", fiction.get(f.recording_id), f.quote) ? " (FICTION: said in a story, not fact)" : ""}`;
     byNote.set(f.recording_id, [...(byNote.get(f.recording_id) || []), line]);
   }
 
@@ -196,13 +202,14 @@ async function sketch(
     recordedOn: (n.recorded_at || "").slice(0, 10),
     summary: n.analysis?.summary || "",
     facts: (byNote.get(n.id) || []).slice(0, 12),
+    fiction: fiction.has(n.id),
   }));
 }
 
 function render(s: Sketch, index?: number, side?: "earlier" | "later"): string {
   const head = index === undefined ? "THIS NOTE" : `[${index}] (${side})`;
   return [
-    `${head} ${s.label}${s.tags.length ? ` — tags: ${s.tags.join(", ")}` : ""} (recorded ${s.recordedOn})`,
+    `${head} ${s.label}${s.tags.length ? ` — tags: ${s.tags.join(", ")}` : ""} (recorded ${s.recordedOn})${s.fiction ? " — HOLDS FICTION: its story is invented, not fact" : ""}`,
     s.summary && `  ${s.summary}`,
     ...s.facts.map((f) => `  · ${f}`),
   ]

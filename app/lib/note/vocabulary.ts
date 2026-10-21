@@ -2,7 +2,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { normalizeTags } from "@/lib/note/filing";
-import { type TagRow, canParent, parentsOf } from "@/lib/note/tag-tree";
+import type { TagRow } from "@/lib/note/tag-tree";
 
 /**
  * The user's tag vocabulary, and the one place a tag is resolved to it.
@@ -121,68 +121,12 @@ export async function rememberTags(
   }
 }
 
-/** Every tag with its parents and meaning: the tree as stored. */
+/** Every tag with its meaning. */
 export async function loadTagRows(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   admin: SupabaseClient<any, any, any>,
   userId: string
 ): Promise<TagRow[]> {
-  const [{ data }, { data: links }] = await Promise.all([
-    admin.from("tag_vocabulary").select("name, meaning").eq("user_id", userId),
-    admin.from("tag_parents").select("tag, parent").eq("user_id", userId),
-  ]);
-  const rows = withParents(Array.isArray(data) ? data : [], links);
-  // A parent row for a tag the vocabulary lacks still counts.
-  const named = new Set(rows.map((row) => row.name));
-  const missing = [...new Set((Array.isArray(links) ? links : []).map((l: { tag?: unknown }) => l.tag))].filter((tag): tag is string => typeof tag === "string" && !named.has(tag));
-  return [...rows, ...withParents(missing.map((name) => ({ name, meaning: null })), links)];
-}
-
-/** Vocabulary rows, each with the tags it sits under from `tag_parents` rows. */
-export function withParents<T extends { name: string; meaning?: string | null }>(rows: T[], links: unknown): (T & TagRow)[] {
-  const above = new Map<string, string[]>();
-  for (const link of Array.isArray(links) ? (links as { tag?: unknown; parent?: unknown }[]) : []) {
-    if (typeof link.tag !== "string" || typeof link.parent !== "string") continue;
-    above.set(link.tag, [...(above.get(link.tag) ?? []), link.parent]);
-  }
-  return rows.map((row) => ({ ...row, meaning: row.meaning ?? null, parents: above.get(row.name) ?? [] }));
-}
-
-/**
- * Puts tags under more tags, as `[child, parent]`: the person dragging in the
- * sidebar, keeping a suggestion, or a vault's `food/recipe`. Adds, never
- * removes another parent. A pair that would put a tag under itself or a tag
- * beneath it is dropped. Never throws: the note is saved either way.
- */
-export async function addParents(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  admin: SupabaseClient<any, any, any>,
-  userId: string,
-  pairs: [string, string][]
-): Promise<void> {
-  if (pairs.length === 0) return;
-  try {
-    await rememberTags(admin, userId, pairs.flat(), true);
-    const parents = parentsOf(await loadTagRows(admin, userId));
-    const adding: { user_id: string; tag: string; parent: string }[] = [];
-    for (const [child, parent] of pairs) {
-      if (parents.get(child)?.has(parent) || !canParent(child, parent, parents)) continue;
-      adding.push({ user_id: userId, tag: child, parent });
-      parents.set(child, new Set([...(parents.get(child) ?? []), parent]));
-    }
-    if (adding.length) await admin.from("tag_parents").upsert(adding, { onConflict: "user_id,tag,parent", ignoreDuplicates: true });
-  } catch (err) {
-    console.error("Tag parents not saved (non-fatal):", err);
-  }
-}
-
-/** Takes `tag` out from under `parent`; its other parents stay. */
-export async function removeParent(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  admin: SupabaseClient<any, any, any>,
-  userId: string,
-  tag: string,
-  parent: string
-) {
-  return admin.from("tag_parents").delete().eq("user_id", userId).eq("tag", tag).eq("parent", parent);
+  const { data } = await admin.from("tag_vocabulary").select("name, meaning").eq("user_id", userId);
+  return ((Array.isArray(data) ? data : []) as { name: string; meaning?: string | null }[]).map((row) => ({ name: row.name, meaning: row.meaning ?? null }));
 }
