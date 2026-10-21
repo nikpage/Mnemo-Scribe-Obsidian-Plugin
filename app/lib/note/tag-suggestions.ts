@@ -161,20 +161,6 @@ export async function noteQuestions(
 }
 
 /**
- * The `mnemo-` tags that seem to fit a note, asked on that note at once and
- * never put on it unasked: each is the person's to keep or skip, note by
- * note. Never throws: a question lost costs a question, never the note.
- */
-export async function askOnNote(admin: Admin, userId: string, noteId: string, asks: Earned[]): Promise<void> {
-  const rows = asks.filter((a) => isMnemo(a.tag)).map((a) => ({ ...blank, kind: "add" as const, tag: a.tag, recording_id: noteId, why: a.why, source: "model" as const }));
-  try {
-    await ask(admin, userId, rows);
-  } catch (err) {
-    console.error("Story tag question not saved (non-fatal):", err);
-  }
-}
-
-/**
  * The tag each thread through the store offers its notes, asked about at once
  * like a tidy-up's. A tag the person already has, skipped, or may not hold is
  * not offered; nothing goes on a note until they keep it.

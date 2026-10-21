@@ -12,7 +12,7 @@ import { isMnemo } from "@/lib/note/filing";
 export const STORY_TAGS = [
   { name: "mnemo-story-mine", meaning: "storyMineRule", fiction: false },
   { name: "mnemo-story-borrowed", meaning: "storyBorrowedRule", fiction: false },
-  { name: "mnemo-story-made-up", meaning: "storyMadeUpRule", fiction: true },
+  { name: "mnemo-story-fiction", meaning: "storyFictionRule", fiction: true },
   { name: "mnemo-story-quote", meaning: "storyQuoteRule", fiction: false },
   { name: "mnemo-story-inspired", meaning: "storyInspiredRule", fiction: false },
 ] as const satisfies readonly { name: string; meaning: TranslationKey; fiction: boolean }[];
@@ -28,16 +28,6 @@ export function isStoryTag(tag: string): boolean {
 export function storyMeaning(tag: string, lang: Lang): string | null {
   const story = STORY_TAGS.find((s) => s.name === tag);
   return story ? t(story.meaning, lang) : null;
-}
-
-/**
- * The person's tags with the story bank in: the five built in, with their
- * rules, over any stored row of the same name; and the person's own `mnemo-`
- * tags only with a meaning, since a rule nobody wrote says nothing.
- */
-export function withStories<T extends { name: string; meaning: string | null }>(own: T[], lang: Lang): { name: string; meaning: string | null }[] {
-  const rest = own.filter((tag) => !isStoryTag(tag.name) && (!isMnemo(tag.name) || tag.meaning?.trim()));
-  return [...rest, ...STORY_TAGS.map((s) => ({ name: s.name, meaning: t(s.meaning, lang) }))];
 }
 
 /**

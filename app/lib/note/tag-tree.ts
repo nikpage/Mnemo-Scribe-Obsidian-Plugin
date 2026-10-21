@@ -17,6 +17,8 @@ export interface TagRow {
   meaning?: string | null;
   /** Each note whose only tag this is, to the tag a tidy-up suggests for it ("" = none). */
   moves?: Record<string, string>;
+  /** Whether a fiction passage may carry it; off for history (`passages.ts`). */
+  fictionCounts?: boolean;
 }
 
 /** Each tag to the tags it sits under. A loop (saved by two devices at once) is cut where it closes. */

@@ -101,6 +101,9 @@ export function isMnemo(tag: string): boolean {
 /** Where journal entries are tagged: `journal`, `deník`. */
 export const JOURNAL = { en: "journal", cs: "deník" } as const;
 
+/** A tag saying only that something is fiction: a passage's label says it, so filing never puts one on. */
+export const FICTION_WORDS = new Set(["fiction", "fikce"]);
+
 /**
  * A title as a path: normalised, and cut at a word boundary so a long title
  * still makes a usable filename.
