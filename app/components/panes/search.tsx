@@ -17,6 +17,8 @@ import { NoteRow } from "@/components/note-row";
 import { BrainHits } from "@/components/what-next";
 import { type BrainStart, OPEN_BRAIN } from "@/components/home-dashboard";
 import { NoteShortcuts } from "@/components/note-shortcuts";
+import { GroupsNotice } from "@/components/groups-notice";
+import { type Group, GROUPS_URL } from "@/lib/note/groups";
 import { Button, Chip, Heading, Input, List, Notice, Reveal, selectClass } from "@/components/ui";
 
 /** How far back a search looks. Days, or everything. */
@@ -51,6 +53,9 @@ export function SearchPane() {
   const [range, setRange] = useState<Range>("any");
   const [language, setLanguage] = useState("");
   const [actionsOnly, setActionsOnly] = useState(false);
+  // Only notes in these groups: this search alone, never saved (`lib/note/groups.ts`).
+  const [groupFilters, setGroupFilters] = useState<string[]>([]);
+  const groups = useApi<{ groups: Group[] }>(GROUPS_URL).data?.groups ?? [];
   // Cold storage and Trash are searched only here, by words, never by the AI.
   const [where, setWhere] = useState<"" | "cold" | "trash">("");
   // What the store already knows about the words being typed. The one
@@ -65,9 +70,9 @@ export function SearchPane() {
   }, [asked]);
 
   useEffect(() => {
-    setFilters({ tags: tagFilters, from, language, actionsOnly, ...(where ? { shelf: where } : {}) });
+    setFilters({ tags: tagFilters, from, language, actionsOnly, groups: groupFilters, ...(where ? { shelf: where } : {}) });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tagFilters.join(","), from, language, actionsOnly, where]);
+  }, [tagFilters.join(","), from, language, actionsOnly, groupFilters.join(","), where]);
 
   const trimmed = query.trim();
   // Asked for once typing pauses, not on every key.
@@ -90,7 +95,7 @@ export function SearchPane() {
   // The question goes to the Brain with the filters it was typed under; the
   // answer is priced and written there.
   function ask(event: React.MouseEvent<HTMLButtonElement>) {
-    const start: BrainStart = { ask: { q: trimmed, tags: tagFilters, from, language: language || null, actions: actionsOnly } };
+    const start: BrainStart = { ask: { q: trimmed, tags: tagFilters, from, language: language || null, actions: actionsOnly, groups: groupFilters } };
     event.currentTarget.dispatchEvent(new CustomEvent(OPEN_BRAIN, { bubbles: true, detail: start }));
   }
 
@@ -101,6 +106,7 @@ export function SearchPane() {
         <Input type="search" data-tip={t("tipSearchBox")} value={query} onChange={(e) => setQuery(e.target.value)} placeholder={t("searchPlaceholder")} />
       </div>
 
+      <GroupsNotice kind="hidden" />
       <div className="mb-4 flex flex-wrap items-center gap-2 text-sm">
         <Chip on={showFilters} aria-expanded={showFilters} tip={t("tipSearchFilter")} onClick={() => setShowFilters(!showFilters)}>
           {t("filter")}
@@ -128,6 +134,20 @@ export function SearchPane() {
             <option value="trash">{t("shelfTrash")}</option>
           </select>
         </div>
+        {groups.length > 0 && (
+          <div className="mb-4 flex flex-wrap gap-1">
+            {groups.map((g) => (
+              <Chip
+                key={g.id}
+                on={groupFilters.includes(g.id)}
+                tip={t("tipSearchGroup")}
+                onClick={() => setGroupFilters((prev) => (prev.includes(g.id) ? prev.filter((x) => x !== g.id) : [...prev, g.id]))}
+              >
+                {t("brainGroup", { name: g.name })}
+              </Chip>
+            ))}
+          </div>
+        )}
         {tags.length > 0 && (
           <div className="mb-4 flex flex-wrap gap-1">
             {tags.map((tag) => (
@@ -170,7 +190,7 @@ export function SearchPane() {
         // Before a word is typed, the two shortest routes back to a note.
         <div>
           <p className="mb-4 text-sm text-muted-foreground">{t("searchEmpty")}</p>
-          <NoteShortcuts pinned={pinned} />
+          <NoteShortcuts pinned={pinned} hidden={counts?.hiddenIds} />
         </div>
       ) : (
         <>

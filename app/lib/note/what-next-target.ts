@@ -29,7 +29,9 @@ export type Scope = (typeof SCOPES)[number];
  * notes: no notes from elsewhere are added by a link, a subject or a theme.
  * `of`, a Brain output's id, reads only the notes that output read.
  * `pick`, the Web's trail, reads only those notes and the notes carrying
- * those tags (or a tag beneath them).
+ * those tags (or a tag beneath them). `groups` reads only the notes in at
+ * least one of those groups (`lib/note/groups.ts`): this reading alone,
+ * never saved; a note a group keeps out of the Brain stays out.
  */
 export interface Narrow {
   only: string[];
@@ -40,6 +42,7 @@ export interface Narrow {
   alone?: boolean;
   of?: string;
   pick?: Trail;
+  groups?: string[];
 }
 
 /** Notes by id and tags by name, read as one subset: a note is in it when it is named or carries a tag named. */
@@ -50,6 +53,11 @@ export function pickOf(raw: { notes?: string[]; tags?: string[] } | undefined): 
   const notes = [...new Set((raw?.notes ?? []).map((id) => id.trim()).filter(Boolean))].sort();
   const tags = normalizeTags(raw?.tags ?? []).sort();
   return notes.length || tags.length ? { notes, tags } : null;
+}
+
+/** One spelling per set of groups: ids sorted, none twice. */
+export function groupsOf(raw: string[] | undefined): string[] {
+  return [...new Set((raw ?? []).map((id) => id.trim()).filter(Boolean))].sort();
 }
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -74,6 +82,8 @@ export function subjectTarget(kind: Kind, subject: string, narrow?: Partial<Narr
   const pick = pickOf(narrow?.pick);
   if (pick?.notes.length) p.set("notes", pick.notes.join(","));
   if (pick?.tags.length) p.set("any", pick.tags.join(","));
+  const groups = groupsOf(narrow?.groups);
+  if (groups.length) p.set("groups", groups.join(","));
   const tail = p.toString();
   return tail ? `${head}\n${tail}` : head;
 }
@@ -92,7 +102,8 @@ export function subjectOf(target: string): { kind: Kind; subject: string; narrow
   const alone = p.get("alone") === "1";
   const of = p.get("of") || "";
   const pick = pickOf({ notes: (p.get("notes") || "").split(","), tags: list("any") });
-  return { kind, subject, narrow: { only: list("only"), not: list("not"), from: date("from"), to: date("to"), ...(centre ? { centre } : {}), ...(alone ? { alone } : {}), ...(of ? { of } : {}), ...(pick ? { pick } : {}) } };
+  const groups = groupsOf((p.get("groups") || "").split(","));
+  return { kind, subject, narrow: { only: list("only"), not: list("not"), from: date("from"), to: date("to"), ...(centre ? { centre } : {}), ...(alone ? { alone } : {}), ...(of ? { of } : {}), ...(pick ? { pick } : {}), ...(groups.length ? { groups } : {}) } };
 }
 
 /**
@@ -134,7 +145,7 @@ export function readingOf(choice: Choice, centreTitle = ""): { scope: Scope; tar
   const topic = choice.topics.map((x) => x.replace(/\s+/g, " ").trim()).filter(Boolean).join(", ");
   const only = normalizeTags(narrow.only);
   const dated = Boolean(narrow.from || narrow.to);
-  const picked = Boolean(pickOf(narrow.pick));
+  const picked = Boolean(pickOf(narrow.pick)) || groupsOf(narrow.groups).length > 0;
   const narrowed = only.length > 0 || normalizeTags(narrow.not).length > 0 || dated || Boolean(narrow.of) || picked;
   if (kind === "picture" && !topic) {
     if (narrow.centre && !narrowed) return { scope: "item", target: narrow.centre };

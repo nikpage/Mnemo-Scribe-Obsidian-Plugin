@@ -4,6 +4,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { readingSections } from "@/lib/note/reading-sections";
 import { EVERYTHING, type Kind, type Narrow, type Scope, subjectOf } from "@/lib/note/what-next-target";
 import { type BrainRef, joinsOf } from "@/lib/note/walk-brain";
+import { type Drew, outNotes, outputOut } from "@/lib/note/groups";
 
 /**
  * The Brain library: every reading the person has had, by what it is called
@@ -172,6 +173,37 @@ export async function additionsOf(
   return (data || []) as Addition[];
 }
 
+/** A reading row as far as what it drew on goes. */
+type DrewRow = { id: string; scope: Scope; target: string; read_ids?: string[] | null; elsewhere_ids?: string[] | null; extracts?: Extract[] | null };
+
+/**
+ * What a reading drew on, its additions with it: it shows the notes it quotes
+ * (and the one note it is of), and read every note sent to it.
+ */
+export function drewOf(row: DrewRow, additions: Addition[]): Drew {
+  const more = additions.filter((a) => a.parent_id === row.id);
+  const shows = [...new Set([...[row, ...more].flatMap((x) => (x.extracts ?? []) as Extract[]).map((e) => e.id), ...(row.scope === "item" ? [row.target] : [])])];
+  const read = row.read_ids ? [...row.read_ids, ...(row.elsewhere_ids ?? []), ...more.flatMap((a) => a.read_ids ?? [])] : null;
+  return { shows, read };
+}
+
+/**
+ * The readings a group now puts out (`lib/note/groups.ts`): those quoting a
+ * hidden note, or drawn from one kept out of the Brain. Free.
+ */
+export async function outReadings(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  admin: SupabaseClient<any, any, any>,
+  userId: string,
+  rows: DrewRow[]
+): Promise<Set<string>> {
+  if (!rows.length) return new Set();
+  const out = await outNotes(admin, userId);
+  if (!out.hidden.size && !out.brainOff.size) return new Set();
+  const added = await additionsOf(admin, userId, rows.map((r) => r.id));
+  return new Set(rows.filter((r) => outputOut(drewOf(r, added), out)).map((r) => r.id));
+}
+
 /** When an output last read its notes: its own writing, or its newest addition. */
 export function readUntil(output: { id: string; created_at: string }, additions: Addition[]): string {
   return additions.filter((a) => a.parent_id === output.id).reduce((at, a) => (Date.parse(a.created_at) > Date.parse(at) ? a.created_at : at), output.created_at);
@@ -200,7 +232,7 @@ export async function findReadings(
   const ask = (column: "title" | "reading") =>
     admin
       .from("what_next_readings")
-      .select("id, scope, target, created_at, title, notes, reading")
+      .select("id, scope, target, created_at, title, notes, reading, read_ids, elsewhere_ids, extracts")
       .eq("user_id", userId)
       .eq("status", "done")
       .neq("scope", "suggest")
@@ -209,9 +241,10 @@ export async function findReadings(
       .order("created_at", { ascending: false })
       .limit(SEARCH_MAX);
   const [byTitle, byText] = await Promise.all([ask("title"), ask("reading")]);
-  const seen = new Set<string>();
+  const found = [...(byTitle.data || []), ...(byText.data || [])];
+  const seen = await outReadings(admin, userId, found);
   const rows: LibraryRow[] = [];
-  for (const r of [...(byTitle.data || []), ...(byText.data || [])]) {
+  for (const r of found) {
     if (seen.has(r.id)) continue;
     seen.add(r.id);
     rows.push({ id: r.id, scope: r.scope, target: r.target, created_at: r.created_at, title: readingTitle(r), notes: r.notes ?? 0 });
@@ -253,8 +286,9 @@ export async function brainRefs(
     .limit(WEB_BRAIN_MAX);
   if (error) throw new Error(error.message);
   // What an addition read and quoted joins the output it was added to.
-  const added = await additionsOf(admin, userId);
-  return (data || []).map((r) => {
+  const [added, out] = await Promise.all([additionsOf(admin, userId), outNotes(admin, userId)]);
+  // One a group now puts out is not drawn (`lib/note/groups.ts`).
+  return (data || []).filter((r) => !outputOut(drewOf(r, added), out)).map((r) => {
     const more = added.filter((a) => a.parent_id === r.id);
     const named = namedIn([r.reading ?? "", ...more.map((a) => a.reading ?? "")].join("\n"), notes);
     const quoted = [...new Set([...[r, ...more].flatMap((x) => (x.extracts ?? []) as Extract[]).map((e) => e.id), ...named])];

@@ -17,6 +17,8 @@ import { Plus } from "lucide-react";
 import { tipOf } from "@/lib/tooltip";
 import { Button, Chip, Cost, Heading, Input, Notice, Options, Pill, buttonClass } from "@/components/ui";
 import { NoteSection } from "@/components/note-section";
+import { GroupsNotice } from "@/components/groups-notice";
+import { type Group, GROUPS_URL } from "@/lib/note/groups";
 import { Additions, PressButton, Prose, type Quote, ReadingProse, Sections, type Spent, SpentLine, type Under } from "@/components/reading-prose";
 
 type Status = "running" | "done" | "failed";
@@ -29,7 +31,7 @@ type Job = Kind | "ask";
 type Asked = { status: Status; answer: string | null; declined: boolean; spent?: Spent };
 
 /** A question brought from Search: its words and the filters it was typed under. */
-export type AskStart = { q: string; tags: string[]; from: string | null; language: string | null; actions: boolean };
+export type AskStart = { q: string; tags: string[]; from: string | null; language: string | null; actions: boolean; groups?: string[] };
 
 /** The jobs in the order they are offered, each named by what the person is about to do. */
 const JOBS: Kind[] = ["inspiration", "next-best", "study", "log"];
@@ -104,9 +106,9 @@ function useReading(scope: Scope, asked: string, open: boolean) {
  * (`search/quote`), written on the server after the press's request has
  * ended (`ask-background`) and asked for every 2 s until it lands.
  */
-function useAsk(on: boolean) {
+function useAsk(on: boolean, groups: string[] = []) {
   const { t } = useLang();
-  const quote = useApi<{ credits: number; balance: number }>(on ? "/api/notes/search/quote" : null);
+  const quote = useApi<{ credits: number; balance: number }>(on ? `/api/notes/search/quote${groups.length ? `?groups=${groups.join(",")}` : ""}` : null);
   const [pressing, setPressing] = useState(false);
   const [askId, setAskId] = useState<string | null>(null);
   const [asked, setAsked] = useState("");
@@ -119,7 +121,7 @@ function useAsk(on: boolean) {
   const failed = answering?.status === "failed" ? t("whatNextFailed") : done?.declined ? t("aiDeclinedAsk") : null;
 
   /** Asks `body.q` at the price shown; a changed price is shown instead and nothing runs. */
-  async function press(body: { q: string; tags: string[]; from: string | null; to: string | null; language: string | null; actions: boolean }) {
+  async function press(body: { q: string; tags: string[]; from: string | null; to: string | null; language: string | null; actions: boolean; groups: string[] }) {
     setPressing(true);
     setAskId(null);
     setNote(null);
@@ -376,11 +378,15 @@ export function WhichNotes({ which, tags, centre, of, alone = true, ask = false,
   const [open, setOpen] = useState<"add" | "when" | null>(null);
   const [query, setQuery] = useState("");
   const { data: suggested } = useApi<{ suggestions: Suggestion[] }>("/api/notes/what-next/suggest");
+  // The person's groups, to read only some of: this run alone, never saved (`lib/note/groups.ts`).
+  const groups = useApi<{ groups: Group[] }>(GROUPS_URL).data?.groups ?? [];
+  const only = narrow.groups ?? [];
 
   const q = query.trim().toLowerCase();
   const chosen = new Set([...narrow.only, ...narrow.not]);
   const offeredTopics = ask ? [] : (suggested?.suggestions ?? []).filter((s) => !topics.includes(s.subject) && s.label.toLowerCase().includes(q));
   const offeredTags = tags.filter((tag) => !chosen.has(tag) && tag.includes(q));
+  const offeredGroups = groups.filter((g) => !only.includes(g.id) && g.name.toLowerCase().includes(q));
 
   // Add stays open: several topics and tags are picked in one go.
   function about(subject: string) {
@@ -390,6 +396,11 @@ export function WhichNotes({ which, tags, centre, of, alone = true, ask = false,
 
   function addTag(tag: string) {
     setNarrow({ ...narrow, only: [...narrow.only, tag] });
+    setQuery("");
+  }
+
+  function onlyGroup(id: string) {
+    setNarrow({ ...narrow, groups: [...only, id] });
     setQuery("");
   }
 
@@ -422,6 +433,11 @@ export function WhichNotes({ which, tags, centre, of, alone = true, ask = false,
             {t("brainTrail", { n: narrow.pick.notes.length + narrow.pick.tags.length })}
           </Pill>
         )}
+        {only.map((id) => (
+          <Pill key={id} onRemove={() => setNarrow({ ...narrow, groups: only.filter((x) => x !== id) })} removeLabel={t("brainRemove")} tip={t("tipBrainGroup")} removeTip={t("tipBrainRemove")}>
+            {t("brainGroup", { name: groups.find((g) => g.id === id)?.name ?? "…" })}
+          </Pill>
+        ))}
         {!ask && topics.map((topic) => (
           <Pill key={topic} onRemove={() => setTopics(topics.filter((x) => x !== topic))} removeLabel={t("brainRemove")} tip={t("tipBrainTopic")} removeTip={t("tipBrainRemove")}>
             {t("brainAbout", { name: topic })}
@@ -439,7 +455,7 @@ export function WhichNotes({ which, tags, centre, of, alone = true, ask = false,
           )
         ))}
         {extra}
-        {(ask ? live.only.length + extra.length === 0 : topics.length === 0 && live.only.length + live.not.length === 0 && !narrow.of && !narrow.pick) && <span className="text-xs">{t("brainEverything")}</span>}
+        {(ask ? live.only.length + extra.length + only.length === 0 : topics.length === 0 && live.only.length + live.not.length === 0 && !narrow.of && !narrow.pick && !only.length) && <span className="text-xs">{t("brainEverything")}</span>}
         {when === "any" ? (
           <Chip on={open === "when"} aria-expanded={open === "when"} tip={t("tipBrainWhenOpen")} onClick={() => setOpen(open === "when" ? null : "when")}>
             {whenLabel}
@@ -514,6 +530,11 @@ export function WhichNotes({ which, tags, centre, of, alone = true, ask = false,
                 {s.label}
               </Chip>
             ))}
+            {offeredGroups.map((g) => (
+              <Chip key={g.id} tip={t("tipBrainGroupOffer")} onClick={() => onlyGroup(g.id)}>
+                {t("brainGroup", { name: g.name })}
+              </Chip>
+            ))}
             {offeredTags.map((tag) => (
               <Chip key={tag} tip={t("tipBrainTagOffer")} onClick={() => addTag(tag)}>
                 #{tag}
@@ -571,7 +592,8 @@ export function BrainReading({
   const [job, setJob] = useState<Job>(ask ? "ask" : "picture");
   const [start] = useState(() => {
     const begun = startOf(ask ? ask.tags : within, { struck: struckAtStart, alone, centre: centre?.id, of: of?.id, pick });
-    return ask?.from ? { ...begun, narrow: { ...begun.narrow, from: ask.from.slice(0, 10) } } : begun;
+    const narrow = { ...begun.narrow, ...(ask?.from ? { from: ask.from.slice(0, 10) } : {}), ...(ask?.groups?.length ? { groups: ask.groups } : {}) };
+    return { ...begun, narrow };
   });
   const which = useWhich(start);
   const { topics, live } = which;
@@ -580,7 +602,7 @@ export function BrainReading({
   // Search's own filters, kept until their × takes them away.
   const [language, setLanguage] = useState(ask?.language ?? null);
   const [actions, setActions] = useState(ask?.actions ?? false);
-  const asking = useAsk(job === "ask");
+  const asking = useAsk(job === "ask", live.groups ?? []);
   const q = question.replace(/\s+/g, " ").trim();
 
   const reading = useReading(asked?.scope ?? "overview", asked?.target ?? "", asked !== null);
@@ -609,6 +631,7 @@ export function BrainReading({
 
   return (
     <div className="space-y-5">
+      <GroupsNotice kind="kept" />
       <section className="space-y-2">
         <h3 className="text-sm font-semibold">{t("brainWant")}</h3>
         <Options label={t("brainWant")} value={job} onChange={setJob} options={(["ask", "picture", ...JOBS] as Job[]).map((kind) => ({ value: kind, label: t(JOB_LABEL[kind]), hint: t(JOB_WHAT[kind]) }))} />
@@ -653,7 +676,7 @@ export function BrainReading({
         <AskPress
           asking={asking}
           question={q}
-          onPress={() => void asking.press({ q, tags: live.only, from: live.from || null, to: live.to || null, language, actions })}
+          onPress={() => void asking.press({ q, tags: live.only, from: live.from || null, to: live.to || null, language, actions, groups: live.groups ?? [] })}
         />
       ) : (
       <section className="space-y-1">

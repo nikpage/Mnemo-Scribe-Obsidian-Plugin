@@ -4,6 +4,9 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { openQuestions } from "@/lib/note/tag-suggestions";
 import { openTodos, type Todo } from "@/lib/note/todos";
 import { READ } from "@/lib/note/shelf";
+import { type Drew, HIDDEN, outNotes, outputOut } from "@/lib/note/groups";
+import { type Extract, additionsOf, drewOf } from "@/lib/note/brain-library";
+import type { Scope } from "@/lib/note/what-next-target";
 
 /**
  * What the home screen shows, in one free read: how much is in the store, the
@@ -46,7 +49,7 @@ export function excerptOf(text: string, max = EXCERPT): string {
 
 export async function homeOf(admin: Admin, userId: string, now = Date.now()): Promise<Home> {
   const since = new Date(now - WEEK).toISOString();
-  const [totals, week, todos, readings, insights, questions, added] = await Promise.all([
+  const [totals, week, todos, readings, insights, questions, added, out] = await Promise.all([
     admin.rpc("note_totals", { uid: userId }),
     admin
       .from("recordings")
@@ -55,24 +58,25 @@ export async function homeOf(admin: Admin, userId: string, now = Date.now()): Pr
       .eq("status", "done")
       .eq("report", false)
       .in("shelf", READ)
+      .neq(HIDDEN, true)
       .gte("recorded_at", since),
     openTodos(admin, userId),
     admin
       .from("what_next_readings")
-      .select("id, scope, target, reading, created_at")
+      .select("id, scope, target, reading, created_at, read_ids, elsewhere_ids, extracts")
       .eq("user_id", userId)
       .eq("status", "done")
       .neq("scope", "suggest")
       .is("parent_id", null)
       .order("created_at", { ascending: false })
-      .limit(READINGS),
+      .limit(READINGS * 4),
     admin
       .from("note_insights")
-      .select("week_start, headline, body")
+      .select("week_start, headline, body, evidence, read_ids")
       .eq("user_id", userId)
       .order("week_start", { ascending: false })
       .order("created_at", { ascending: true })
-      .limit(3),
+      .limit(12),
     openQuestions(admin, userId),
     admin
       .from("recordings")
@@ -81,13 +85,21 @@ export async function homeOf(admin: Admin, userId: string, now = Date.now()): Pr
       .eq("status", "done")
       .eq("report", false)
       .in("shelf", READ)
+      .neq(HIDDEN, true)
       .order("created_at", { ascending: false })
       .limit(RECENT),
+    outNotes(admin, userId),
   ]);
+  // What a group now puts out is not shown here (`lib/note/groups.ts`).
+  const anyOut = out.hidden.size + out.brainOff.size > 0;
+  const additions = anyOut ? await additionsOf(admin, userId, ((readings.data || []) as { id: string }[]).map((r) => r.id)) : [];
+  const shown = (drew: Drew) => !anyOut || !outputOut(drew, out);
 
   const total = (Array.isArray(totals.data) ? totals.data[0] : totals.data) as { notes?: number; words?: number } | null;
-  const kept = (readings.data || []) as { id: string; scope: string; target: string; reading: string | null; created_at: string }[];
-  const written = ((insights.data || []) as { week_start: string; headline: string; body: string }[]).map((i) => ({
+  type ReadingRow = { id: string; scope: Scope; target: string; reading: string | null; created_at: string; read_ids: string[] | null; elsewhere_ids: string[] | null; extracts: Extract[] | null };
+  const kept = ((readings.data || []) as ReadingRow[]).filter((r) => shown(drewOf(r, additions))).slice(0, READINGS);
+  type InsightRow = { week_start: string; headline: string; body: string; evidence: string[] | null; read_ids: string[] | null };
+  const written = ((insights.data || []) as InsightRow[]).filter((i) => shown({ shows: i.evidence ?? [], read: i.read_ids })).slice(0, 3).map((i) => ({
     week: i.week_start,
     headline: i.headline,
     body: i.body,

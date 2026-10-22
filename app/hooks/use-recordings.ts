@@ -29,6 +29,8 @@ export interface Recording {
   shelf: Shelf;
   /** The client or site this note is about, when it is about one. */
   subject_id: string | null;
+  /** A group hides it (`lib/note/groups.ts`): on no list. */
+  hidden?: boolean;
   /** The published note that replaces this one (`lib/note/publish.ts`), or null. */
   superseded_by?: string | null;
   /** The language the transcriber heard. Null on notes recorded before detection. */
@@ -39,7 +41,7 @@ export interface Recording {
 }
 
 /** What a change to a note must touch to move it onto or off a list, or change the numbers. */
-const LISTED = ["status", "shelf", "tags", "recorded_at", "pinned"] as const;
+const LISTED = ["status", "shelf", "tags", "recorded_at", "pinned", "hidden"] as const;
 
 /**
  * The notes still on their way — sending, being written up, failed — and

@@ -13,7 +13,7 @@
  * `useSummaries()`; a note's full body by the note screen when it is opened.
  */
 export const LIST_COLUMNS =
-  "id, user_id, label, filename, recorded_at, duration_seconds, file_size_bytes, status, drive_audio_id, path, tags, pinned, shelf, subject_id, superseded_by, language, error, created_at, updated_at";
+  "id, user_id, label, filename, recorded_at, duration_seconds, file_size_bytes, status, drive_audio_id, path, tags, pinned, shelf, subject_id, superseded_by, language, error, created_at, updated_at, hidden";
 
 const LIST_FIELDS = LIST_COLUMNS.split(",").map((c) => c.trim());
 

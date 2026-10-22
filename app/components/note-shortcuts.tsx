@@ -29,7 +29,7 @@ function List({ title, notes }: { title: string; notes: { id: string; path?: str
  * The two shortest routes back to a note: the ones the user pinned, and the
  * ones they just had open. Neither costs a query.
  */
-export function NoteShortcuts({ pinned }: { pinned: { id: string; path?: string; label: string }[] }) {
+export function NoteShortcuts({ pinned, hidden = [] }: { pinned: { id: string; path?: string; label: string }[]; hidden?: string[] }) {
   const { t } = useLang();
   // This list lives in localStorage, so the server has nothing to render for
   // it — an empty list there, the real one once hydrated.
@@ -50,7 +50,8 @@ export function NoteShortcuts({ pinned }: { pinned: { id: string; path?: string;
   return (
     <>
       <List title={t("pinned")} notes={pinned} />
-      <List title={t("recent")} notes={recent.slice(0, 5)} />
+      {/* A note a group hides since it was opened is not offered again. */}
+      <List title={t("recent")} notes={recent.filter((n) => !hidden.includes(n.id)).slice(0, 5)} />
     </>
   );
 }

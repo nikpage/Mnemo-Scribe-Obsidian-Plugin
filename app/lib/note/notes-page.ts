@@ -5,6 +5,7 @@ import { LIST_COLUMNS } from "@/lib/note/list-columns";
 import { decodeSegment, normalizePath, normalizeTags, splitPath } from "@/lib/note/filing";
 import { findNotes } from "@/lib/note/find";
 import { READ, SHELVES, type Shelf } from "@/lib/note/shelf";
+import { HIDDEN, inGroups, loadGroups } from "@/lib/note/groups";
 
 /**
  * The notes, from the server, a page at a time.
@@ -77,7 +78,8 @@ function readCursor(cursor: string): { at: string; id: string } | null {
 
 /** One page of a view, newest first, starting below `before`. */
 export async function notesPage<T>(admin: Db, userId: string, view: NoteView, before: string | null): Promise<NotesPage<T>> {
-  let q = admin.from("recordings").select(LIST_COLUMNS).eq("user_id", userId).eq("status", "done");
+  // A note a group hides is on no list (`lib/note/groups.ts`).
+  let q = admin.from("recordings").select(LIST_COLUMNS).eq("user_id", userId).eq("status", "done").neq(HIDDEN, true);
   q = view.shelf === "read" ? q.in("shelf", READ) : q.eq("shelf", view.shelf);
   if (view.untagged) q = q.eq("tags", "{}");
   else if (view.tags?.length) q = q.contains("tags", view.tags);
@@ -153,18 +155,31 @@ export type NoteCounts = {
   shelves: Record<Shelf, number>;
   /** Finished notes in use that are pinned, newest first. */
   pinned: PinnedNote[];
+  /** Finished notes a group hides, counted nowhere else (`lib/note/groups.ts`). */
+  hidden: number;
+  /** Their ids: what this device's own lists (recently opened) leave out. */
+  hiddenIds: string[];
+  /** Finished notes a group keeps out of the Brain. */
+  kept: number;
 };
 
-type CountRow = { id: string; tags: string[] | null; status: string; shelf: Shelf | null; pinned: boolean; path: string; label: string; recorded_at: string };
+type CountRow = { id: string; tags: string[] | null; status: string; shelf: Shelf | null; pinned: boolean; path: string; label: string; recorded_at: string; hidden?: boolean; brain_off?: boolean };
 
 /** The numbers every list and the sidebar show, without sending a note. */
 export async function noteCounts(admin: Db, userId: string): Promise<NoteCounts> {
-  const rows = await everyNote<CountRow>(admin, userId, "id, tags, status, shelf, pinned, path, label, recorded_at");
+  const rows = await everyNote<CountRow>(admin, userId, "id, tags, status, shelf, pinned, path, label, recorded_at, hidden, brain_off");
   const shelves = Object.fromEntries(SHELVES.map((s) => [s, 0])) as Record<Shelf, number>;
   const sets = new Map<string, TagSet>();
   const pinned: PinnedNote[] = [];
+  const hiddenIds: string[] = [];
+  let kept = 0;
   for (const row of rows) {
     if (row.status !== "done") continue;
+    if (row.brain_off && row.shelf !== "trash") kept++;
+    if (row.hidden) {
+      if (row.shelf !== "trash") hiddenIds.push(row.id);
+      continue;
+    }
     const shelf = SHELVES.includes(row.shelf as Shelf) ? (row.shelf as Shelf) : "normal";
     shelves[shelf]++;
     if (shelf !== "normal") continue;
@@ -176,7 +191,7 @@ export async function noteCounts(admin: Db, userId: string): Promise<NoteCounts>
     if (row.pinned) pinned.push({ id: row.id, path: row.path, label: row.label, recorded_at: row.recorded_at });
   }
   pinned.sort((a, b) => (a.recorded_at < b.recorded_at ? 1 : -1));
-  return { sets: [...sets.values()], shelves, pinned };
+  return { sets: [...sets.values()], shelves, pinned, hidden: hiddenIds.length, hiddenIds, kept };
 }
 
 /** The tags in use, most used first, as many as `max`. */
@@ -189,20 +204,25 @@ export function tagsByUse(sets: TagSet[], max = 30): string[] {
     .map(([tag]) => tag);
 }
 
-type NameRow = { id: string; label: string; recorded_at: string; path: string; tags: string[]; status: string };
+type NameRow = { id: string; label: string; recorded_at: string; path: string; tags: string[]; status: string; hidden?: boolean; subject_id?: string | null };
 
 /**
  * Notes whose name or tags match what was typed (`findNotes()`), on these
- * shelves: the first `limit`, and whether more match.
+ * shelves, in one of `groups` when it names any: the first `limit`, and
+ * whether more match. A note a group hides never matches.
  */
 export async function nameHits(
   admin: Db,
   userId: string,
   query: string,
   shelves: Shelf[],
-  limit: number
+  limit: number,
+  groups: string[] = []
 ): Promise<{ results: { note: NameRow; excerpt: string }[]; more: boolean }> {
-  const rows = await everyNote<NameRow>(admin, userId, "id, label, recorded_at, path, tags, status", shelves);
-  const found = findNotes(rows, query);
+  const [rows, all] = await Promise.all([
+    everyNote<NameRow>(admin, userId, "id, label, recorded_at, path, tags, status, hidden, subject_id", shelves),
+    groups.length ? loadGroups(admin, userId) : [],
+  ]);
+  const found = findNotes(rows.filter((n) => !n.hidden && inGroups(all, groups, { tags: n.tags, subjectId: n.subject_id })), query);
   return { results: found.slice(0, limit), more: found.length > limit };
 }

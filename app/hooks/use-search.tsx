@@ -23,6 +23,8 @@ export type Filters = {
   from?: string | null;
   language?: string;
   actionsOnly?: boolean;
+  /** Only notes in these groups: this search alone, never saved (`lib/note/groups.ts`). */
+  groups?: string[];
   /** Cold storage or Trash, searched only in their own view. None: the shelves search reads. */
   shelf?: Extract<Shelf, "cold" | "trash">;
 };
@@ -65,6 +67,7 @@ export function searchParams(query: string, f: Filters): URLSearchParams {
   if (f.from) params.set("from", f.from);
   if (f.language) params.set("language", f.language);
   if (f.actionsOnly) params.set("actions", "1");
+  if (f.groups?.length) params.set("groups", f.groups.join(","));
   if (f.shelf) params.set("shelf", f.shelf);
   return params;
 }
