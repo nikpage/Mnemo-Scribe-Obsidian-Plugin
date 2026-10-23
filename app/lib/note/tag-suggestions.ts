@@ -296,18 +296,23 @@ export async function decide(admin: Admin, userId: string, id: string, keep: boo
     } else if (s.kind === "merge") {
       if (!target || target === s.tag) return false;
       await rememberTags(admin, userId, [target], true);
+      const [{ data: into }, { data: from }] = await Promise.all([
+        admin.from("tag_vocabulary").select("aliases, hidden, brain_off").eq("user_id", userId).eq("name", target).maybeSingle(),
+        admin.from("tag_vocabulary").select("hidden, brain_off").eq("user_id", userId).eq("name", s.tag).maybeSingle(),
+      ]);
+      // A switch on the merged tag stays on for its notes, set before they move (`lib/note/switches.ts`).
+      const switches = { hidden: into?.hidden === true || from?.hidden === true, brain_off: into?.brain_off === true || from?.brain_off === true };
+      await admin
+        .from("tag_vocabulary")
+        .update({ aliases: normalizeTags([...((into?.aliases as string[]) || []), s.tag]), ...switches, updated_at: now })
+        .eq("user_id", userId)
+        .eq("name", target);
       for (const noteId of await carrying(admin, userId, s.tag)) {
         await retag(admin, userId, noteId, (tags, why) => ({
           tags: [...tags.filter((tag) => tag !== s.tag), target],
           why: { ...(why[s.tag] !== undefined ? { [target]: why[s.tag] } : {}), ...why },
         }));
       }
-      const { data: into } = await admin.from("tag_vocabulary").select("aliases").eq("user_id", userId).eq("name", target).maybeSingle();
-      await admin
-        .from("tag_vocabulary")
-        .update({ aliases: normalizeTags([...((into?.aliases as string[]) || []), s.tag]), updated_at: now })
-        .eq("user_id", userId)
-        .eq("name", target);
       await dropTag(admin, userId, s.tag);
     } else if (s.kind === "retire") {
       // A note left bare goes to the tag the person ticked, if that tag is theirs.

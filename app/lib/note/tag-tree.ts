@@ -14,6 +14,10 @@ export interface TagRow {
   moves?: Record<string, string>;
   /** Whether a fiction passage may carry it; off for history (`passages.ts`). */
   fictionCounts?: boolean;
+  /** Its notes leave every list, search and the Web (`lib/note/switches.ts`). */
+  hidden?: boolean;
+  /** No Brain call reads its notes. */
+  brainOff?: boolean;
 }
 
 export interface TagCount {

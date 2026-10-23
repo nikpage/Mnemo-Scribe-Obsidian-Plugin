@@ -4,7 +4,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { readingSections } from "@/lib/note/reading-sections";
 import { EVERYTHING, type Kind, type Narrow, type Scope, subjectOf } from "@/lib/note/what-next-target";
 import { type BrainRef, joinsOf } from "@/lib/note/walk-brain";
-import { type Drew, outNotes, outputOut } from "@/lib/note/groups";
+import { type Drew, outNotes, outputOut } from "@/lib/note/switches";
 
 /**
  * The Brain library: every reading the person has had, by what it is called
@@ -188,7 +188,7 @@ export function drewOf(row: DrewRow, additions: Addition[]): Drew {
 }
 
 /**
- * The readings a group now puts out (`lib/note/groups.ts`): those quoting a
+ * The readings a switch now puts out (`lib/note/switches.ts`): those quoting a
  * hidden note, or drawn from one kept out of the Brain. Free.
  */
 export async function outReadings(
@@ -287,7 +287,7 @@ export async function brainRefs(
   if (error) throw new Error(error.message);
   // What an addition read and quoted joins the output it was added to.
   const [added, out] = await Promise.all([additionsOf(admin, userId), outNotes(admin, userId)]);
-  // One a group now puts out is not drawn (`lib/note/groups.ts`).
+  // One a switch now puts out is not drawn (`lib/note/switches.ts`).
   return (data || []).filter((r) => !outputOut(drewOf(r, added), out)).map((r) => {
     const more = added.filter((a) => a.parent_id === r.id);
     const named = namedIn([r.reading ?? "", ...more.map((a) => a.reading ?? "")].join("\n"), notes);

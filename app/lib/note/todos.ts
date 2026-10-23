@@ -3,7 +3,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { noteName } from "@/lib/note/filing";
 import { READ } from "@/lib/note/shelf";
-import { HIDDEN } from "@/lib/note/groups";
+import { HIDDEN } from "@/lib/note/switches";
 import { sourceOf, type TodoSource } from "@/lib/note/todo-source";
 
 /**
@@ -45,7 +45,7 @@ export async function openTodos(admin: Admin, userId: string): Promise<Todo[]> {
     .eq("status", "done")
     .eq("report", false)
     .in("shelf", READ)
-    // A group hides it (`lib/note/groups.ts`).
+    // A switch hides it (`lib/note/switches.ts`).
     .neq(HIDDEN, true)
     .order("recorded_at", { ascending: false })
     .limit(NOTES);

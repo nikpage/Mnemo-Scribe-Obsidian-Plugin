@@ -11,7 +11,7 @@ import { formatCount, formatDate } from "@/lib/format";
 import { NoteRow } from "@/components/note-row";
 import { NoteLink } from "@/components/note-link";
 import { Button, Heading, List, Notice } from "@/components/ui";
-import { GroupsNotice } from "@/components/groups-notice";
+import { SwitchesNotice } from "@/components/switches-notice";
 import { EVERYTHING, subjectOf, type Scope } from "@/lib/note/what-next-target";
 import { reportHref } from "@/lib/note/brain-library";
 import type { Home } from "@/lib/note/home";
@@ -124,7 +124,7 @@ export function HomeDashboard({ links = true }: { links?: boolean }) {
 
   return (
     <div className="space-y-5">
-      <GroupsNotice kind="hidden" />
+      <SwitchesNotice kind="hidden" />
       <List>
         <li className="flex flex-wrap gap-3 px-4 py-3">
           {[

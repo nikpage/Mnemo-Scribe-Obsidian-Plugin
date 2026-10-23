@@ -50,7 +50,7 @@ export function NoteShortcuts({ pinned, hidden = [] }: { pinned: { id: string; p
   return (
     <>
       <List title={t("pinned")} notes={pinned} />
-      {/* A note a group hides since it was opened is not offered again. */}
+      {/* A note a switch hides since it was opened is not offered again. */}
       <List title={t("recent")} notes={recent.filter((n) => !hidden.includes(n.id)).slice(0, 5)} />
     </>
   );

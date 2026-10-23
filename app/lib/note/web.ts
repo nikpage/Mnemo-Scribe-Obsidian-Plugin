@@ -4,7 +4,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { LinkType } from "@/lib/note/links";
 import type { TagRow } from "@/lib/note/tag-tree";
 import { loadTagRows } from "@/lib/note/vocabulary";
-import { HIDDEN, outNotes, outputOut } from "@/lib/note/groups";
+import { HIDDEN, outNotes, outputOut } from "@/lib/note/switches";
 
 /**
  * What the Web and the Brain read of the person's notes: the tags and the
@@ -76,7 +76,7 @@ export async function loadRoutes(admin: Db, userId: string): Promise<Routes> {
     every<{ name: string; evidence: string[] | null; read_ids: string[] | null }>((a, b) => admin.from("note_themes").select("name, evidence, read_ids").eq("user_id", userId).order("id").range(a, b)),
     outNotes(admin, userId),
   ]);
-  // A theme a group now puts out joins nothing (`lib/note/groups.ts`).
+  // A theme a switch now puts out joins nothing (`lib/note/switches.ts`).
   const themes = threads.filter((t) => !outputOut({ shows: t.evidence ?? [], read: t.read_ids }, out));
   return {
     links: links.map((l) => ({ from: l.from_recording, to: l.to_recording, type: l.link_type, reason: l.reason || "", confirmed: l.confirmed })),

@@ -10,7 +10,7 @@ import type { Utterance } from "@/lib/transcription/types";
 import type { WatchItem } from "@/lib/packs";
 import type { FactHit } from "@/lib/note/fact-line";
 import { READ } from "@/lib/note/shelf";
-import { BRAIN_OFF, HIDDEN } from "@/lib/note/groups";
+import { BRAIN_OFF, HIDDEN } from "@/lib/note/switches";
 
 export type { FactHit };
 
@@ -302,7 +302,7 @@ export async function lookupFacts(
     )
     .eq("user_id", userId)
     // Only from notes the AI may read: none from Cold storage or Trash, none
-    // from a note a group hides or keeps out of the Brain (`lib/note/groups.ts`).
+    // from a note a switch hides or keeps out of the Brain (`lib/note/switches.ts`).
     .in("recordings.shelf", READ)
     .neq(`recordings.${HIDDEN}`, true)
     .neq(`recordings.${BRAIN_OFF}`, true)

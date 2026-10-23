@@ -29,7 +29,7 @@ export interface Recording {
   shelf: Shelf;
   /** The client or site this note is about, when it is about one. */
   subject_id: string | null;
-  /** A group hides it (`lib/note/groups.ts`): on no list. */
+  /** A tag or client hides it (`lib/note/switches.ts`): on no list. */
   hidden?: boolean;
   /** The published note that replaces this one (`lib/note/publish.ts`), or null. */
   superseded_by?: string | null;

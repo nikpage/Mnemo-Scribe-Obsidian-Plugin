@@ -4,7 +4,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { openQuestions } from "@/lib/note/tag-suggestions";
 import { openTodos, type Todo } from "@/lib/note/todos";
 import { READ } from "@/lib/note/shelf";
-import { type Drew, HIDDEN, outNotes, outputOut } from "@/lib/note/groups";
+import { type Drew, HIDDEN, outNotes, outputOut } from "@/lib/note/switches";
 import { type Extract, additionsOf, drewOf } from "@/lib/note/brain-library";
 import type { Scope } from "@/lib/note/what-next-target";
 
@@ -90,7 +90,7 @@ export async function homeOf(admin: Admin, userId: string, now = Date.now()): Pr
       .limit(RECENT),
     outNotes(admin, userId),
   ]);
-  // What a group now puts out is not shown here (`lib/note/groups.ts`).
+  // What a switch now puts out is not shown here (`lib/note/switches.ts`).
   const anyOut = out.hidden.size + out.brainOff.size > 0;
   const additions = anyOut ? await additionsOf(admin, userId, ((readings.data || []) as { id: string }[]).map((r) => r.id)) : [];
   const shown = (drew: Drew) => !anyOut || !outputOut(drew, out);
