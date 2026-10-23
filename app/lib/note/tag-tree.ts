@@ -12,8 +12,6 @@ export interface TagRow {
   meaning?: string | null;
   /** Each note whose only tag this is, to the tag a tidy-up suggests for it ("" = none). */
   moves?: Record<string, string>;
-  /** Whether a fiction passage may carry it; off for history (`passages.ts`). */
-  fictionCounts?: boolean;
   /** Its notes leave every list, search and the Web (`lib/note/switches.ts`). */
   hidden?: boolean;
   /** No Brain call reads its notes. */

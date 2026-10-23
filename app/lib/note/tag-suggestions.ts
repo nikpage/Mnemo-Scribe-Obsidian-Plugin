@@ -3,10 +3,9 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { claim, release } from "@/lib/ai/claim";
 import { noteText } from "@/lib/note/build";
-import { isMnemo, normalizeSegment, normalizeTags, singular } from "@/lib/note/filing";
+import { JOURNAL_WORDS, STORY_NAMES, isMnemo, normalizeSegment, normalizeTags, singular } from "@/lib/note/filing";
 import { primaryLanguage } from "@/lib/note/language";
 import { READ } from "@/lib/note/shelf";
-import { storyMeaning } from "@/lib/note/stories";
 import { loadSubjects } from "@/lib/note/subjects";
 import { type Earned, type OwnTag, type Proposal, type TagSummary, type Verdict, alreadyAsked, barred, checkNotes, planTags, quoted, tagNote } from "@/lib/note/tagging";
 import { applyVocabulary, joinKnown, loadTagRows, loadVocabulary, rememberTags } from "@/lib/note/vocabulary";
@@ -139,7 +138,6 @@ export async function noteQuestions(
   ]);
   const has = new Set((note?.tags as string[] | null) || []);
   const meanings = new Map((await loadTagRows(admin, userId)).map((r) => [r.name, r.meaning]));
-  const lang = await primaryLanguage(admin, userId);
   return [
     ...((data || []) as Pick<Suggestion, "id" | "tag" | "meaning" | "notes">[]).map((s) => ({
       id: s.id,
@@ -150,7 +148,7 @@ export async function noteQuestions(
     })),
     ...((stories || []) as Pick<Suggestion, "id" | "tag" | "why">[])
       .filter((s) => !has.has(s.tag))
-      .map((s) => ({ id: s.id, tag: s.tag, meaning: storyMeaning(s.tag, lang) ?? meanings.get(s.tag) ?? null, why: s.why ?? "", notes: 1, story: true as const })),
+      .map((s) => ({ id: s.id, tag: s.tag, meaning: meanings.get(s.tag) ?? null, why: s.why ?? "", notes: 1, story: true as const })),
   ];
 }
 
@@ -662,21 +660,25 @@ export async function tagsInUse(admin: Admin, userId: string): Promise<string[]>
 /**
  * Words the person gave a note — said out loud, or a folder it sat in. Those
  * that are already their tags go on the note; the rest are asked about as
- * new tags. A state word or a client's name is neither.
+ * new tags. A state word or a client's name is neither. The journal's word
+ * and a story bank name are passed on unasked: saving turns them into what
+ * they mean (`savedTags()`).
  */
 export async function givenTags(admin: Admin, userId: string, noteId: string, words: string[], source: "spoken" | "folder"): Promise<string[]> {
   const subjects = await clientNames(admin, userId);
   const vocabulary = await loadVocabulary(admin, userId);
   const clean = applyVocabulary(vocabulary, joinKnown(vocabulary, normalizeTags(words))).filter((tag) => !barred(tag, subjects));
   if (clean.length === 0) return [];
+  const retired = clean.filter((tag) => JOURNAL_WORDS.has(tag) || STORY_NAMES.has(tag));
+  const asked = clean.filter((tag) => !retired.includes(tag));
   const own = new Set((await ownTags(admin, userId, await tagsInUse(admin, userId))).map((tag) => tag.name));
   const skipped = await skippedNames(admin, userId);
   await proposeTags(
     admin,
     userId,
     noteId,
-    clean.filter((tag) => !own.has(tag) && !skipped.has(tag)).map((tag) => ({ tag, meaning: "", why: "" })),
+    asked.filter((tag) => !own.has(tag) && !skipped.has(tag)).map((tag) => ({ tag, meaning: "", why: "" })),
     source
   );
-  return clean.filter((tag) => own.has(tag));
+  return [...asked.filter((tag) => own.has(tag)), ...retired];
 }

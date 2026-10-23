@@ -98,8 +98,21 @@ export function isMnemo(tag: string): boolean {
   return tag.startsWith(MNEMO);
 }
 
-/** Where journal entries are tagged: `journal`, `deník`. */
-export const JOURNAL = { en: "journal", cs: "deník" } as const;
+/** The journal's words: a note saved with one is Kind journal (`analysis.journal`), never tagged it. */
+export const JOURNAL_WORDS = new Set(["journal", "deník"]);
+
+/** The story bank's old names: a passage's Kind says what they said, so none is ever a tag. */
+export const STORY_NAMES = new Set(["mnemo-story-mine", "mnemo-story-borrowed", "mnemo-story-fiction", "mnemo-story-quote", "mnemo-story-inspired"]);
+
+/**
+ * Tags as a note keeps them, however they came (typed, a vault, said, a
+ * folder): a journal word marks the note a journal entry instead, a story
+ * bank name is dropped.
+ */
+export function savedTags(tags: string[]): { tags: string[]; journal: boolean } {
+  const clean = normalizeTags(tags);
+  return { tags: clean.filter((tag) => !JOURNAL_WORDS.has(tag) && !STORY_NAMES.has(tag)), journal: clean.some((tag) => JOURNAL_WORDS.has(tag)) };
+}
 
 /** A tag saying only that something is fiction: a passage's label says it, so filing never puts one on. */
 export const FICTION_WORDS = new Set(["fiction", "fikce"]);
