@@ -10,10 +10,14 @@ import { noteName } from "@/lib/note/filing";
 import { formatDuration } from "@/lib/format";
 import { Document } from "yaml";
 import type { Shelf } from "@/lib/note/shelf";
+import { KIND_WORD, type Kind, noteKinds } from "@/lib/note/kinds";
+import type { Label } from "@/lib/note/passage-labels";
 
 export type NoteAnalysis = {
   summary?: string;
   actionItems?: string[];
+  /** Its speaker called it a journal entry: Kind journal in every passage. */
+  journal?: boolean;
 };
 
 export type NoteSource = {
@@ -28,6 +32,8 @@ export type NoteSource = {
   path?: string;
   /** Labels as written, plain: `recipe`. Any number; the UI nudges toward few. */
   tags?: string[];
+  /** Its Kinds, the note line's order (`noteKinds()`); the app's, never read back from a file. */
+  kinds?: Kind[];
   recordedAt: string;
   durationSeconds?: number | null;
   transcript?: string;
@@ -76,12 +82,13 @@ export type NoteRow = {
  * vault-edited note exported empty. Tags are written plain: which tags sit
  * under which lives only in the app's own views, never in another app.
  */
-export function noteSource(row: NoteRow, author?: string): NoteSource {
+export function noteSource(row: NoteRow, author?: string, passages: Pick<Label, "kind" | "truth" | "words">[] = []): NoteSource {
   return {
     id: row.id,
     title: noteName(row.path || "", row.label || ""),
     path: row.path || "",
     tags: row.tags || [],
+    kinds: noteKinds(passages, row.analysis?.journal === true),
     recordedAt: row.recorded_at,
     durationSeconds: row.duration_seconds,
     transcript: (row.transcript?.utterances || []).map((u) => u.text).join("\n"),
@@ -161,6 +168,7 @@ export function buildNote(source: NoteSource): NoteDocument {
     date: date.toISOString(),
   };
   if (source.tags?.length) frontmatter.tags = source.tags;
+  if (source.kinds?.length) frontmatter.kind = source.kinds.map((k) => KIND_WORD[k]);
   if (source.author) frontmatter.author = source.author;
   if (source.durationSeconds) frontmatter.duration = formatDuration(source.durationSeconds);
   frontmatter.scribe_id = source.id;

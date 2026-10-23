@@ -24,6 +24,18 @@ export const KIND_NAME: Record<Kind, TranslationKey> = {
   inspired: "passageWordsInspired",
 };
 
+/** Each Kind as a note file's `kind:` writes it (`buildNote()`), the same in every language. */
+export const KIND_WORD: Record<Kind, string> = {
+  journal: "journal",
+  points: "ideas",
+  log: "log",
+  draft: "draft",
+  fiction: "story",
+  quote: "quote",
+  borrowed: "retold",
+  inspired: "my take",
+};
+
 /** How the note's line says a Kind that is not what the speaker was doing: "with a story". */
 export const KIND_WITH: Partial<Record<Kind, TranslationKey>> = {
   fiction: "kindWithStory",

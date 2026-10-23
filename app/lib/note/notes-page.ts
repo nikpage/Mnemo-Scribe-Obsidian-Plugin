@@ -163,7 +163,7 @@ export async function notesPage<T>(admin: Db, userId: string, view: NoteView, be
  * A tag view's rows marked "in a story" (`inAStory()`) for any tag it was
  * opened by: one boolean a row, worked out here so the list carries no text.
  */
-async function markStories(admin: Db, userId: string, rows: (ListRow & { id: string })[], tags: string[]): Promise<void> {
+export async function markStories(admin: Db, userId: string, rows: (ListRow & { id: string })[], tags: string[]): Promise<void> {
   const ids = rows.map((r) => r.id);
   const [passages, { data, error }] = await Promise.all([
     passagesByNote(admin, userId, ids),

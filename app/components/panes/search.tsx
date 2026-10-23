@@ -192,7 +192,12 @@ export function SearchPane() {
             <>
               <List>
                 {results.map((result) => (
-                  <NoteRow key={result.note.id} note={result.note} excerpt={result.excerpt} />
+                  <NoteRow
+                    key={result.note.id}
+                    note={result.note}
+                    meta={result.note.in_story && <span data-tip={t("tipInStory")}>{t("inStory")}</span>}
+                    excerpt={result.excerpt}
+                  />
                 ))}
               </List>
               {more && !fuzzy && <ShowMore onMore={showMore} />}

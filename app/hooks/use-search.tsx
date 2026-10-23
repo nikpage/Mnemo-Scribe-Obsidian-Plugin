@@ -14,6 +14,8 @@ export type SearchResult = {
     recorded_at: string;
     path: string;
     tags: string[];
+    /** Narrowed by a tag: it reaches the note only through a story. */
+    in_story?: boolean;
   };
   excerpt: string;
 };
