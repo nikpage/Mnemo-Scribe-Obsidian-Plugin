@@ -5,7 +5,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 /**
  * What is not the author's own and real, as the Brain reads it. A note filed
  * in passages (`passages.ts`) knows which of its passages are a story, a
- * quote, someone else's story retold, or the author's take on an idea from
+ * quote, someone else's words borrowed, or the author inspired by an idea from
  * elsewhere; whenever its text, whole or cut, is handed to a model reading
  * the store, each such part is wrapped in its own marker naming the note it
  * comes from, so a story's economics can be an idea and never a fact, and a
@@ -45,12 +45,12 @@ export const MARKERS: Record<Other, { open: (title: string) => string; close: st
     close: "⟦end of quote⟧",
   },
   borrowed: {
-    open: (title) => `⟦RETOLD in “${title}”: someone else's true story, with where it came from; told as theirs, saying where it came from, never as the author's⟧`,
-    close: "⟦end of retold⟧",
+    open: (title) => `⟦BORROWED in “${title}”: someone else's true story, with where it came from; told as theirs, saying where it came from, never as the author's⟧`,
+    close: "⟦end of borrowed⟧",
   },
   inspired: {
-    open: (title) => `⟦TAKE in “${title}”: the author arguing from an idea from elsewhere; the idea used in the author's own words, never quoted or credited⟧`,
-    close: "⟦end of take⟧",
+    open: (title) => `⟦INSPIRED in “${title}”: the author arguing from an idea from elsewhere; the idea used in the author's own words, never quoted or credited⟧`,
+    close: "⟦end of inspired⟧",
   },
 };
 

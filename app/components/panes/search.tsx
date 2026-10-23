@@ -195,7 +195,7 @@ export function SearchPane() {
                   <NoteRow
                     key={result.note.id}
                     note={result.note}
-                    meta={result.note.in_story && <span data-tip={t("tipInStory")}>{t("inStory")}</span>}
+                    meta={result.note.in_fiction && <span data-tip={t("tipInFiction")}>{t("inFiction")}</span>}
                     excerpt={result.excerpt}
                   />
                 ))}

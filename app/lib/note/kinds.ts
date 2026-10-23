@@ -5,8 +5,8 @@ import type { Label } from "@/lib/note/passage-labels";
 
 /**
  * Kind: a passage's three labels read as one list (`passage-labels.ts`). What
- * the speaker was doing (journal, ideas, log, draft), whether it was a story,
- * and whose words (quote, retold, my take). The database keeps the labels as
+ * the speaker was doing (journal, points, log, draft), whether it was a story,
+ * and whose words (quote, borrowed, inspired). The database keeps the labels as
  * they are; these are their values, named in `i18n.ts`.
  */
 export const KINDS = ["journal", "points", "log", "draft", "fiction", "quote", "borrowed", "inspired"] as const;
@@ -27,21 +27,21 @@ export const KIND_NAME: Record<Kind, TranslationKey> = {
 /** Each Kind as a note file's `kind:` writes it (`buildNote()`), the same in every language. */
 export const KIND_WORD: Record<Kind, string> = {
   journal: "journal",
-  points: "ideas",
+  points: "points",
   log: "log",
   draft: "draft",
-  fiction: "story",
+  fiction: "fiction",
   quote: "quote",
-  borrowed: "retold",
-  inspired: "my take",
+  borrowed: "borrowed",
+  inspired: "inspired",
 };
 
-/** How the note's line says a Kind that is not what the speaker was doing: "with a story". */
+/** How the note's line says a Kind that is not what the speaker was doing: "with fiction". */
 export const KIND_WITH: Partial<Record<Kind, TranslationKey>> = {
-  fiction: "kindWithStory",
+  fiction: "kindWithFiction",
   quote: "kindWithQuote",
-  borrowed: "kindWithRetold",
-  inspired: "kindWithMyTake",
+  borrowed: "kindWithBorrowed",
+  inspired: "kindWithInspired",
 };
 
 /** A Kind from an address or a request; anything else is dropped. */
@@ -91,10 +91,10 @@ export function kindMatch(note: { tags: string[]; journal: boolean }, passages: 
 }
 
 /**
- * Whether a tag reaches a note only through a story: every passage carrying it
+ * Whether a tag reaches a note only through fiction: every passage carrying it
  * is fiction, and the person did not give it by hand ("" in `tag_why`).
  */
-export function inAStory(why: Record<string, string>, passages: Pick<Label, "truth" | "topics">[], tag: string): boolean {
+export function onlyInFiction(why: Record<string, string>, passages: Pick<Label, "truth" | "topics">[], tag: string): boolean {
   if (why[tag] === "") return false;
   const carrying = passages.filter((p) => p.topics.includes(tag));
   return carrying.length > 0 && carrying.every((p) => p.truth === "fiction");

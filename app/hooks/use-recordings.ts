@@ -31,8 +31,8 @@ export interface Recording {
   subject_id: string | null;
   /** A tag or client hides it (`lib/note/switches.ts`): on no list. */
   hidden?: boolean;
-  /** In a tag view: a tag it was opened by reaches it only through a story (`inAStory()`). */
-  in_story?: boolean;
+  /** In a tag view: a tag it was opened by reaches it only through fiction (`onlyInFiction()`). */
+  in_fiction?: boolean;
   /** The published note that replaces this one (`lib/note/publish.ts`), or null. */
   superseded_by?: string | null;
   /** The language the transcriber heard. Null on notes recorded before detection. */

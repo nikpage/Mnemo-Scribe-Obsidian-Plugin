@@ -4,7 +4,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { LIST_COLUMNS } from "@/lib/note/list-columns";
 import { decodeSegment, normalizePath, normalizeTags, splitPath } from "@/lib/note/filing";
 import { findNotes } from "@/lib/note/find";
-import { type Kind, type KindPassage, inAStory, kindMatch, readKinds } from "@/lib/note/kinds";
+import { type Kind, type KindPassage, onlyInFiction, kindMatch, readKinds } from "@/lib/note/kinds";
 import { READ, SHELVES, type Shelf } from "@/lib/note/shelf";
 import { HIDDEN } from "@/lib/note/switches";
 
@@ -81,8 +81,8 @@ function readCursor(cursor: string): { at: string; id: string } | null {
   return { at, id };
 }
 
-/** A list's row: in a tag view, whether a tag it was opened by reaches the note only through a story. */
-export type ListRow = { in_story?: boolean };
+/** A list's row: in a tag view, whether a tag it was opened by reaches the note only through fiction. */
+export type ListRow = { in_fiction?: boolean };
 
 /** The finished notes a view shows, before any cursor: a query to add to. */
 function viewQuery(admin: Db, userId: string, view: NoteView, columns: string) {
@@ -155,15 +155,15 @@ export async function notesPage<T>(admin: Db, userId: string, view: NoteView, be
     rows = (data ?? []) as unknown as typeof rows;
   }
   const recordings = rows.slice(0, NOTES_PAGE);
-  if (view.tags?.length && recordings.length) await markStories(admin, userId, recordings, view.tags);
+  if (view.tags?.length && recordings.length) await markFiction(admin, userId, recordings, view.tags);
   return { recordings, next: rows.length > NOTES_PAGE ? cursorOf(recordings[recordings.length - 1]) : null };
 }
 
 /**
- * A tag view's rows marked "in a story" (`inAStory()`) for any tag it was
+ * A tag view's rows marked "in fiction" (`onlyInFiction()`) for any tag it was
  * opened by: one boolean a row, worked out here so the list carries no text.
  */
-export async function markStories(admin: Db, userId: string, rows: (ListRow & { id: string })[], tags: string[]): Promise<void> {
+export async function markFiction(admin: Db, userId: string, rows: (ListRow & { id: string })[], tags: string[]): Promise<void> {
   const ids = rows.map((r) => r.id);
   const [passages, { data, error }] = await Promise.all([
     passagesByNote(admin, userId, ids),
@@ -171,7 +171,7 @@ export async function markStories(admin: Db, userId: string, rows: (ListRow & { 
   ]);
   if (error) throw new Error(error.message);
   const why = new Map(((data ?? []) as { id: string; tag_why: Record<string, string> | null }[]).map((r) => [r.id, r.tag_why ?? {}]));
-  for (const row of rows) row.in_story = tags.some((tag) => inAStory(why.get(row.id) ?? {}, passages.get(row.id) ?? [], tag));
+  for (const row of rows) row.in_fiction = tags.some((tag) => onlyInFiction(why.get(row.id) ?? {}, passages.get(row.id) ?? [], tag));
 }
 
 /**
