@@ -4,6 +4,7 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { api, useApi } from "@/lib/api";
 import type { Shelf } from "@/lib/note/shelf";
+import type { Kind } from "@/lib/note/kinds";
 import type { LibraryRow } from "@/lib/note/brain-library";
 
 export type SearchResult = {
@@ -20,6 +21,8 @@ export type SearchResult = {
 /** Everything that narrows a search. The sidebar sets none of it. */
 export type Filters = {
   tags?: string[];
+  /** Kinds one passage must all be, with the tags (`kindMatch()`). */
+  kinds?: Kind[];
   from?: string | null;
   language?: string;
   actionsOnly?: boolean;
@@ -62,6 +65,7 @@ export function useSearch(): Search {
 export function searchParams(query: string, f: Filters): URLSearchParams {
   const params = new URLSearchParams({ q: query });
   if (f.tags?.length) params.set("tags", f.tags.join(","));
+  if (f.kinds?.length) params.set("kinds", f.kinds.join(","));
   if (f.from) params.set("from", f.from);
   if (f.language) params.set("language", f.language);
   if (f.actionsOnly) params.set("actions", "1");

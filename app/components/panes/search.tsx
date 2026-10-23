@@ -18,6 +18,8 @@ import { BrainHits } from "@/components/what-next";
 import { type BrainStart, OPEN_BRAIN } from "@/components/home-dashboard";
 import { NoteShortcuts } from "@/components/note-shortcuts";
 import { SwitchesNotice } from "@/components/switches-notice";
+import { KindPicker } from "@/components/kind-picker";
+import { readKinds } from "@/lib/note/kinds";
 import { Button, Chip, Heading, Input, List, Notice, Reveal, selectClass } from "@/components/ui";
 
 /** How far back a search looks. Days, or everything. */
@@ -44,11 +46,13 @@ export function SearchPane() {
   // the sidebar — and a tag view's "Search these notes" narrows it by `tags`.
   const asked = params.get("q") || "";
   const within = normalizeTags((params.get("tags") || "").split(","));
+  const withinKinds = readKinds(params.get("kinds"));
   const { query, setQuery, setFilters, results, searching, active, runFuzzy, fuzzying, fuzzy, more, showMore, brain } = useSearch();
   const counts = useCounts().data;
 
-  const [showFilters, setShowFilters] = useState(within.length > 0);
+  const [showFilters, setShowFilters] = useState(within.length > 0 || withinKinds.length > 0);
   const [tagFilters, setTagFilters] = useState<string[]>(within);
+  const [kindFilters, setKindFilters] = useState(withinKinds);
   const [range, setRange] = useState<Range>("any");
   const [language, setLanguage] = useState("");
   const [actionsOnly, setActionsOnly] = useState(false);
@@ -66,9 +70,9 @@ export function SearchPane() {
   }, [asked]);
 
   useEffect(() => {
-    setFilters({ tags: tagFilters, from, language, actionsOnly, ...(where ? { shelf: where } : {}) });
+    setFilters({ tags: tagFilters, kinds: kindFilters, from, language, actionsOnly, ...(where ? { shelf: where } : {}) });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tagFilters.join(","), from, language, actionsOnly, where]);
+  }, [tagFilters.join(","), kindFilters.join(","), from, language, actionsOnly, where]);
 
   const trimmed = query.trim();
   // Asked for once typing pauses, not on every key.
@@ -91,7 +95,7 @@ export function SearchPane() {
   // The question goes to the Brain with the filters it was typed under; the
   // answer is priced and written there.
   function ask(event: React.MouseEvent<HTMLButtonElement>) {
-    const start: BrainStart = { ask: { q: trimmed, tags: tagFilters, from, language: language || null, actions: actionsOnly } };
+    const start: BrainStart = { ask: { q: trimmed, tags: tagFilters, kinds: kindFilters, from, language: language || null, actions: actionsOnly } };
     event.currentTarget.dispatchEvent(new CustomEvent(OPEN_BRAIN, { bubbles: true, detail: start }));
   }
 
@@ -130,6 +134,7 @@ export function SearchPane() {
             <option value="trash">{t("shelfTrash")}</option>
           </select>
         </div>
+        <KindPicker chosen={kindFilters} onChange={setKindFilters} />
         {tags.length > 0 && (
           <div className="mb-4 flex flex-wrap gap-1">
             {tags.map((tag) => (

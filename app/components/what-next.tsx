@@ -18,6 +18,7 @@ import { tipOf } from "@/lib/tooltip";
 import { Button, Chip, Cost, Heading, Input, Notice, Options, Pill, buttonClass } from "@/components/ui";
 import { NoteSection } from "@/components/note-section";
 import { SwitchesNotice } from "@/components/switches-notice";
+import type { Kind as NoteKind } from "@/lib/note/kinds";
 import { Additions, PressButton, Prose, type Quote, ReadingProse, Sections, type Spent, SpentLine, type Under } from "@/components/reading-prose";
 
 type Status = "running" | "done" | "failed";
@@ -30,7 +31,7 @@ type Job = Kind | "ask";
 type Asked = { status: Status; answer: string | null; declined: boolean; spent?: Spent };
 
 /** A question brought from Search: its words and the filters it was typed under. */
-export type AskStart = { q: string; tags: string[]; from: string | null; language: string | null; actions: boolean };
+export type AskStart = { q: string; tags: string[]; kinds?: NoteKind[]; from: string | null; language: string | null; actions: boolean };
 
 /** The jobs in the order they are offered, each named by what the person is about to do. */
 const JOBS: Kind[] = ["inspiration", "next-best", "study", "log"];

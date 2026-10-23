@@ -4,6 +4,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { LIST_COLUMNS } from "@/lib/note/list-columns";
 import { decodeSegment, normalizePath, normalizeTags, splitPath } from "@/lib/note/filing";
 import { findNotes } from "@/lib/note/find";
+import { type Kind, type KindPassage, inAStory, kindMatch, readKinds } from "@/lib/note/kinds";
 import { READ, SHELVES, type Shelf } from "@/lib/note/shelf";
 import { HIDDEN } from "@/lib/note/switches";
 
@@ -29,6 +30,8 @@ export type NoteView = {
   tags?: string[];
   /** Notes with no tag. */
   untagged?: boolean;
+  /** Notes with a passage of every one of these Kinds, holding the tags too (`kindMatch()`). */
+  kinds?: Kind[];
 };
 
 /** A page of a list, and where the next one starts (null at the end). */
@@ -44,6 +47,7 @@ export function pageUrl(view: NoteView, before: string | null = null): string {
   const p = new URLSearchParams({ shelf: view.shelf });
   if (view.tags?.length) p.set("tags", view.tags.join(","));
   if (view.untagged) p.set("untagged", "1");
+  if (view.kinds?.length) p.set("kinds", view.kinds.join(","));
   if (before) p.set("before", before);
   return `/api/recordings?${p}`;
 }
@@ -62,6 +66,7 @@ export function readView(params: URLSearchParams): { view: NoteView; before: str
       shelf: shelf as NoteView["shelf"],
       tags: normalizeTags((params.get("tags") || "").split(",")),
       untagged: params.get("untagged") === "1",
+      kinds: readKinds(params.get("kinds")),
     },
     before: params.get("before"),
   };
@@ -76,21 +81,97 @@ function readCursor(cursor: string): { at: string; id: string } | null {
   return { at, id };
 }
 
-/** One page of a view, newest first, starting below `before`. */
-export async function notesPage<T>(admin: Db, userId: string, view: NoteView, before: string | null): Promise<NotesPage<T>> {
+/** A list's row: in a tag view, whether a tag it was opened by reaches the note only through a story. */
+export type ListRow = { in_story?: boolean };
+
+/** The finished notes a view shows, before any cursor: a query to add to. */
+function viewQuery(admin: Db, userId: string, view: NoteView, columns: string) {
   // A note a switch hides is on no list (`lib/note/switches.ts`).
-  let q = admin.from("recordings").select(LIST_COLUMNS).eq("user_id", userId).eq("status", "done").neq(HIDDEN, true);
+  let q = admin.from("recordings").select(columns).eq("user_id", userId).eq("status", "done").neq(HIDDEN, true);
   q = view.shelf === "read" ? q.in("shelf", READ) : q.eq("shelf", view.shelf);
   if (view.untagged) q = q.eq("tags", "{}");
   else if (view.tags?.length) q = q.contains("tags", view.tags);
-  const from = before ? readCursor(before) : null;
-  if (from) q = q.or(`recorded_at.lt."${from.at}",and(recorded_at.eq."${from.at}",id.lt.${from.id})`);
-  // One more than a page says whether there is a next one.
-  const { data, error } = await q.order("recorded_at", { ascending: false }).order("id", { ascending: false }).limit(NOTES_PAGE + 1);
-  if (error) throw new Error(error.message);
-  const rows = (data ?? []) as unknown as (T & { recorded_at: string; id: string })[];
+  return q;
+}
+
+/** These notes' passages, labels and topics only, by note. */
+export async function passagesByNote(admin: Db, userId: string, ids: string[] | null): Promise<Map<string, (KindPassage & { recording_id: string })[]>> {
+  const out = new Map<string, (KindPassage & { recording_id: string })[]>();
+  const PAGE = 1000;
+  for (let from = 0; ; from += PAGE) {
+    let q = admin.from("passages").select("recording_id, kind, truth, words, topics, position").eq("user_id", userId);
+    if (ids) q = q.in("recording_id", ids);
+    const { data, error } = await q.order("recording_id").order("position").range(from, from + PAGE - 1);
+    if (error) throw new Error(error.message);
+    for (const row of (data ?? []) as (KindPassage & { recording_id: string })[]) {
+      out.set(row.recording_id, [...(out.get(row.recording_id) ?? []), { ...row, topics: row.topics ?? [] }]);
+    }
+    if (!data || data.length < PAGE || ids) return out;
+  }
+}
+
+/**
+ * The ids of a Kind view's page, newest first, below `before`: every note the
+ * tags allow read with its passages, as a Kind lives on a passage, not a note.
+ */
+async function kindPageIds(admin: Db, userId: string, view: NoteView, before: string | null): Promise<{ id: string; recorded_at: string }[]> {
+  type Candidate = { id: string; recorded_at: string; tags: string[] | null; journal: boolean | null };
+  const notes: Candidate[] = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await viewQuery(admin, userId, view, "id, recorded_at, tags, journal:analysis->journal")
+      .order("id")
+      .range(from, from + 999);
+    if (error) throw new Error(error.message);
+    notes.push(...((data ?? []) as unknown as Candidate[]));
+    if (!data || data.length < 1000) break;
+  }
+  const passages = await passagesByNote(admin, userId, null);
+  const at = before ? readCursor(before) : null;
+  return notes
+    .filter((n) => kindMatch({ tags: n.tags ?? [], journal: n.journal === true }, passages.get(n.id) ?? [], view.kinds ?? [], view.tags ?? []))
+    .filter((n) => !at || Date.parse(n.recorded_at) < Date.parse(at.at) || (Date.parse(n.recorded_at) === Date.parse(at.at) && n.id < at.id))
+    .sort((a, b) => Date.parse(b.recorded_at) - Date.parse(a.recorded_at) || (a.id < b.id ? 1 : -1))
+    .slice(0, NOTES_PAGE + 1);
+}
+
+/** One page of a view, newest first, starting below `before`. */
+export async function notesPage<T>(admin: Db, userId: string, view: NoteView, before: string | null): Promise<NotesPage<T & ListRow>> {
+  let rows: (T & ListRow & { recorded_at: string; id: string })[];
+  if (view.kinds?.length) {
+    const ids = await kindPageIds(admin, userId, view, before);
+    const { data, error } = ids.length
+      ? await admin.from("recordings").select(LIST_COLUMNS).eq("user_id", userId).in("id", ids.map((n) => n.id))
+      : { data: [], error: null };
+    if (error) throw new Error(error.message);
+    const byId = new Map(((data ?? []) as unknown as typeof rows).map((r) => [r.id, r]));
+    rows = ids.flatMap((n) => byId.get(n.id) ?? []);
+  } else {
+    let q = viewQuery(admin, userId, view, LIST_COLUMNS);
+    const from = before ? readCursor(before) : null;
+    if (from) q = q.or(`recorded_at.lt."${from.at}",and(recorded_at.eq."${from.at}",id.lt.${from.id})`);
+    // One more than a page says whether there is a next one.
+    const { data, error } = await q.order("recorded_at", { ascending: false }).order("id", { ascending: false }).limit(NOTES_PAGE + 1);
+    if (error) throw new Error(error.message);
+    rows = (data ?? []) as unknown as typeof rows;
+  }
   const recordings = rows.slice(0, NOTES_PAGE);
+  if (view.tags?.length && recordings.length) await markStories(admin, userId, recordings, view.tags);
   return { recordings, next: rows.length > NOTES_PAGE ? cursorOf(recordings[recordings.length - 1]) : null };
+}
+
+/**
+ * A tag view's rows marked "in a story" (`inAStory()`) for any tag it was
+ * opened by: one boolean a row, worked out here so the list carries no text.
+ */
+async function markStories(admin: Db, userId: string, rows: (ListRow & { id: string })[], tags: string[]): Promise<void> {
+  const ids = rows.map((r) => r.id);
+  const [passages, { data, error }] = await Promise.all([
+    passagesByNote(admin, userId, ids),
+    admin.from("recordings").select("id, tag_why").eq("user_id", userId).in("id", ids),
+  ]);
+  if (error) throw new Error(error.message);
+  const why = new Map(((data ?? []) as { id: string; tag_why: Record<string, string> | null }[]).map((r) => [r.id, r.tag_why ?? {}]));
+  for (const row of rows) row.in_story = tags.some((tag) => inAStory(why.get(row.id) ?? {}, passages.get(row.id) ?? [], tag));
 }
 
 /**
